@@ -1,33 +1,28 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 import json
 import os
 from datetime import datetime
 import csv
 import pandas as pd
 import sys
+import uuid  # Add this import for generating unique transaction IDs
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
     try:
-        # Get the user's documents folder
-        user_docs = os.path.expanduser('~/Documents')
-        app_data_dir = os.path.join(user_docs, 'CigarInventory')
+        # For non-JSON files (like icons), use the application directory
+        if not relative_path.endswith('.json'):
+            try:
+                base_path = sys._MEIPASS
+            except Exception:
+                base_path = os.path.abspath(".")
+            return os.path.join(base_path, relative_path)
         
-        # Create the directory if it doesn't exist
-        if not os.path.exists(app_data_dir):
-            os.makedirs(app_data_dir)
-        
-        # If it's a data file (json), use the app data directory
-        if relative_path.endswith('.json'):
-            return os.path.join(app_data_dir, relative_path)
+        # For JSON files, we'll use the instance's data directory
+        # This is a temporary fallback - the actual method will be called from the instance
+        return os.path.join(os.path.abspath("."), relative_path)
             
-        # For other resources, use PyInstaller's temp folder or current directory
-        try:
-            base_path = sys._MEIPASS
-        except Exception:
-            base_path = os.path.abspath(".")
-        return os.path.join(base_path, relative_path)
     except Exception as e:
         print(f"Error in resource_path: {e}")
         return relative_path
@@ -37,6 +32,10 @@ class CigarInventory:
         self.root = root
         self.root.title("Cigar Inventory Manager")
         self.root.geometry("1500x900")  # Made taller for calculator
+        
+        # Initialize data directory (start with project directory for safety)
+        self.data_directory = os.path.abspath(".")
+        self.humidor_name = "Default"
         
         # Set window icon
         try:
@@ -71,9 +70,16 @@ class CigarInventory:
         self.sales_history = []
         self.stored_quantities = {}  # New dictionary to store quantities persistently
         
+        # Create main container
+        main_container = ttk.Frame(root)
+        main_container.pack(expand=True, fill='both', padx=10, pady=5)
+        
+        # Add file location bar at the top
+        self.setup_file_location_bar(main_container)
+        
         # Create notebook for tabs
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(expand=True, fill='both', padx=10, pady=5)
+        self.notebook = ttk.Notebook(main_container)
+        self.notebook.pack(expand=True, fill='both', pady=(5, 0))
         
         # Create main frame for inventory tab
         self.main_frame = ttk.Frame(self.notebook)
@@ -87,6 +93,9 @@ class CigarInventory:
         self.setup_inventory_tab()
         self.setup_sales_history_tab()
         
+        # Update location display
+        self.update_location_display()
+        
         # Load and display inventory after UI is ready
         self.load_inventory()
         self.refresh_inventory()
@@ -94,6 +103,47 @@ class CigarInventory:
         
         # Ensure proper cleanup
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def setup_file_location_bar(self, parent):
+        """Setup the file location display and management bar."""
+        # File location frame
+        location_frame = ttk.LabelFrame(parent, text="Data Location & Humidor Management", padding="5")
+        location_frame.pack(fill='x', pady=(0, 5))
+        
+        # Current location display
+        location_info_frame = ttk.Frame(location_frame)
+        location_info_frame.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(location_info_frame, text="Current Humidor:").pack(side='left', padx=(0, 5))
+        self.humidor_label = ttk.Label(location_info_frame, text=self.humidor_name, 
+                                      font=('TkDefaultFont', 9, 'bold'))
+        self.humidor_label.pack(side='left', padx=(0, 10))
+        
+        ttk.Label(location_info_frame, text="Data Directory:").pack(side='left', padx=(0, 5))
+        self.location_label = ttk.Label(location_info_frame, text=self.data_directory, 
+                                       font=('TkDefaultFont', 8), foreground='blue')
+        self.location_label.pack(side='left', fill='x', expand=True)
+        
+        # Buttons frame
+        buttons_frame = ttk.Frame(location_frame)
+        buttons_frame.pack(fill='x')
+        
+        # Add management buttons
+        ttk.Button(buttons_frame, text="Change Data Directory", 
+                  command=self.change_data_directory, width=20).pack(side='left', padx=(0, 5))
+        
+        ttk.Button(buttons_frame, text="New Humidor", 
+                  command=self.new_humidor, width=15).pack(side='left', padx=(0, 5))
+        
+        ttk.Button(buttons_frame, text="Load Humidor", 
+                  command=self.load_humidor, width=15).pack(side='left', padx=(0, 5))
+        
+        ttk.Button(buttons_frame, text="Backup Data", 
+                  command=self.backup_data, width=15).pack(side='left', padx=(0, 5))
+        
+        # Status indicator
+        self.status_label = ttk.Label(buttons_frame, text="Ready", foreground='green')
+        self.status_label.pack(side='right', padx=(5, 0))
 
     def setup_inventory_tab(self):
         # Main container
@@ -224,80 +274,90 @@ class CigarInventory:
         self.tree.bind('<Button-3>', lambda e: self.tree.selection_remove(self.tree.selection()))
 
     def setup_sales_history_tab(self):
-        """Setup the sales history tab."""
+        """Setup the enhanced sales history tab with transaction grouping and partial returns."""
         # Create main frame with padding
         main_frame = ttk.Frame(self.sales_frame, padding="10")
         main_frame.pack(fill='both', expand=True)
 
-        # Create treeview for sales history
-        columns = ('date', 'brand', 'cigar', 'size', 'price_per_stick', 'quantity', 'total_cost')
-        self.sales_tree = ttk.Treeview(main_frame, columns=columns, show='headings')
+        # Create a PanedWindow for resizable layout
+        paned_window = ttk.PanedWindow(main_frame, orient='horizontal')
+        paned_window.pack(fill='both', expand=True)
+
+        # Left frame for transaction list
+        left_frame = ttk.LabelFrame(paned_window, text="Sales Transactions", padding="5")
+        paned_window.add(left_frame, weight=1)
+
+        # Right frame for transaction details and actions
+        right_frame = ttk.LabelFrame(paned_window, text="Transaction Details & Returns", padding="5")
+        paned_window.add(right_frame, weight=1)
+
+        # === LEFT FRAME: Transaction List ===
+        # Treeview for transactions (grouped by transaction_id)
+        trans_columns = ('date', 'items', 'total')
+        self.transaction_tree = ttk.Treeview(left_frame, columns=trans_columns, show='headings', height=15)
         
-        # Configure columns
-        headings = {
-            'date': 'Date',
-            'brand': 'Brand',
-            'cigar': 'Cigar',
-            'size': 'Size',
-            'price_per_stick': 'Price/Stick',
-            'quantity': 'Quantity',
-            'total_cost': 'Total Cost'
-        }
+        # Configure transaction columns
+        self.transaction_tree.heading('date', text='Date & Time')
+        self.transaction_tree.heading('items', text='Items Sold')
+        self.transaction_tree.heading('total', text='Total Value')
         
-        for col, heading in headings.items():
-            self.sales_tree.heading(col, text=heading)
-            self.sales_tree.column(col, width=120)
+        self.transaction_tree.column('date', width=150)
+        self.transaction_tree.column('items', width=80)
+        self.transaction_tree.column('total', width=100)
+
+        # Add scrollbar for transactions
+        trans_scrollbar = ttk.Scrollbar(left_frame, orient='vertical', command=self.transaction_tree.yview)
+        self.transaction_tree.configure(yscrollcommand=trans_scrollbar.set)
         
-        # Add scrollbar
-        scrollbar = ttk.Scrollbar(main_frame, orient='vertical', command=self.sales_tree.yview)
-        self.sales_tree.configure(yscrollcommand=scrollbar.set)
+        # Pack transaction tree and scrollbar
+        self.transaction_tree.pack(side='left', fill='both', expand=True)
+        trans_scrollbar.pack(side='right', fill='y')
+
+        # === RIGHT FRAME: Transaction Details ===
+        # Treeview for individual items in selected transaction
+        detail_columns = ('cigar', 'brand', 'size', 'quantity', 'price_per_stick', 'total_cost')
+        self.detail_tree = ttk.Treeview(right_frame, columns=detail_columns, show='headings', height=10)
         
-        # Pack treeview and scrollbar
-        self.sales_tree.pack(side='left', fill='both', expand=True)
-        scrollbar.pack(side='right', fill='y')
+        # Configure detail columns
+        self.detail_tree.heading('cigar', text='Cigar')
+        self.detail_tree.heading('brand', text='Brand')
+        self.detail_tree.heading('size', text='Size')
+        self.detail_tree.heading('quantity', text='Qty')
+        self.detail_tree.heading('price_per_stick', text='Price/Stick')
+        self.detail_tree.heading('total_cost', text='Total')
+        
+        self.detail_tree.column('cigar', width=120)
+        self.detail_tree.column('brand', width=100)
+        self.detail_tree.column('size', width=70)
+        self.detail_tree.column('quantity', width=50)
+        self.detail_tree.column('price_per_stick', width=80)
+        self.detail_tree.column('total_cost', width=80)
 
-        # Add undo button frame
-        button_frame = ttk.Frame(self.sales_frame, padding="10")
-        button_frame.pack(fill='x')
+        # Add scrollbar for details
+        detail_scrollbar = ttk.Scrollbar(right_frame, orient='vertical', command=self.detail_tree.yview)
+        self.detail_tree.configure(yscrollcommand=detail_scrollbar.set)
+        
+        # Pack detail tree and scrollbar
+        self.detail_tree.pack(side='top', fill='both', expand=True)
+        detail_scrollbar.pack(side='right', fill='y')
 
-        def undo_selected_sale():
-            selected_items = self.sales_tree.selection()
-            if not selected_items:
-                messagebox.showwarning("Warning", "Please select a sale to undo")
-                return
+        # === ACTION BUTTONS ===
+        button_frame = ttk.Frame(right_frame)
+        button_frame.pack(fill='x', pady=(10, 0))
 
-            if messagebox.askyesno("Confirm Undo", "Are you sure you want to undo the selected sale?"):
-                for item in selected_items:
-                    values = self.sales_tree.item(item)['values']
-                    if values:
-                        # Find the sale record
-                        sale_date = values[0]
-                        cigar_name = values[2]
-                        quantity = int(values[5])
+        # Return buttons
+        ttk.Button(button_frame, text="Return Selected Item(s)", 
+                  command=self.return_selected_items, width=25).pack(side='left', padx=5)
+        
+        ttk.Button(button_frame, text="Return Entire Transaction", 
+                  command=self.return_entire_transaction, width=25).pack(side='left', padx=5)
 
-                        # Restore inventory count
-                        for cigar in self.inventory:
-                            if cigar['cigar'] == cigar_name:
-                                cigar['count'] = int(cigar['count']) + quantity
-                                break
+        # === BIND EVENTS ===
+        # When a transaction is selected, show its details
+        self.transaction_tree.bind('<<TreeviewSelect>>', self.on_transaction_select)
 
-                        # Remove the sale record
-                        self.sales_history = [sale for sale in self.sales_history 
-                                           if not (sale['date'] == sale_date and 
-                                                 sale['cigar'] == cigar_name)]
-
-                # Save changes
-                self.save_inventory()
-                self.save_sales_history()
-
-                # Refresh displays
-                self.refresh_inventory()
-                self.refresh_sales_history()
-                messagebox.showinfo("Success", "Selected sales have been undone")
-
-        # Add undo button
-        ttk.Button(button_frame, text="Undo Selected Sale", 
-                  command=undo_selected_sale).pack(side='left', padx=5)
+        # Store current transaction for detail view
+        self.current_transaction_id = None
 
     def add_new_brand(self):
         dialog = tk.Toplevel(self.root)
@@ -985,7 +1045,7 @@ class CigarInventory:
 
     def save_inventory(self):
         try:
-            with open(resource_path('cigar_inventory.json'), 'w') as f:
+            with open(self.get_data_file_path('cigar_inventory.json'), 'w') as f:
                 json.dump(self.inventory, f, indent=2)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save inventory: {str(e)}")
@@ -997,48 +1057,49 @@ class CigarInventory:
             
             # Load brands first
             try:
-                with open(resource_path('cigar_brands.json'), 'r') as f:
+                with open(self.get_data_file_path('cigar_brands.json'), 'r') as f:
                     self.brands = set(json.load(f))
             except FileNotFoundError:
                 self.brands = set()
             
             # Load sizes
             try:
-                with open(resource_path('cigar_sizes.json'), 'r') as f:
+                with open(self.get_data_file_path('cigar_sizes.json'), 'r') as f:
                     self.sizes = set(json.load(f))
             except FileNotFoundError:
                 self.sizes = set()
                 
             # Load types
             try:
-                with open(resource_path('cigar_types.json'), 'r') as f:
+                with open(self.get_data_file_path('cigar_types.json'), 'r') as f:
                     self.types = set(json.load(f))
             except FileNotFoundError:
                 self.types = set()
             
             # Load inventory
-            with open(resource_path('cigar_inventory.json'), 'r') as f:
-                self.inventory = json.load(f)
-                # Add existing values to sets and ensure proper data structure
-                for cigar in self.inventory:
-                    if 'brand' not in cigar: cigar['brand'] = ''
-                    if 'size' not in cigar: cigar['size'] = ''
-                    if 'type' not in cigar: cigar['type'] = ''
-                    if 'personal_rating' not in cigar: cigar['personal_rating'] = None
-                    
-                    if cigar['brand']: self.brands.add(cigar['brand'])
-                    if cigar['size']: self.sizes.add(cigar['size'])
-                    if cigar['type']: self.types.add(cigar['type'])
-                    
-                    # Only calculate price_per_stick if it doesn't exist
-                    if 'price_per_stick' not in cigar:
-                        cigar['price_per_stick'] = self.calculate_price_per_stick(
-                            cigar['price'], 
-                            cigar['shipping'], 
-                            cigar['count']
-                        )
-        except FileNotFoundError:
-            self.inventory = []
+            try:
+                with open(self.get_data_file_path('cigar_inventory.json'), 'r') as f:
+                    self.inventory = json.load(f)
+                    # Add existing values to sets and ensure proper data structure
+                    for cigar in self.inventory:
+                        if 'brand' not in cigar: cigar['brand'] = ''
+                        if 'size' not in cigar: cigar['size'] = ''
+                        if 'type' not in cigar: cigar['type'] = ''
+                        if 'personal_rating' not in cigar: cigar['personal_rating'] = None
+                        
+                        if cigar['brand']: self.brands.add(cigar['brand'])
+                        if cigar['size']: self.sizes.add(cigar['size'])
+                        if cigar['type']: self.types.add(cigar['type'])
+                        
+                        # Only calculate price_per_stick if it doesn't exist
+                        if 'price_per_stick' not in cigar:
+                            cigar['price_per_stick'] = self.calculate_price_per_stick(
+                                cigar['price'], 
+                                cigar['shipping'], 
+                                cigar['count']
+                            )
+            except FileNotFoundError:
+                self.inventory = []
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load inventory: {str(e)}")
             self.inventory = []
@@ -1097,7 +1158,7 @@ class CigarInventory:
 
     def save_brands(self):
         try:
-            with open(resource_path('cigar_brands.json'), 'w') as f:
+            with open(self.get_data_file_path('cigar_brands.json'), 'w') as f:
                 json.dump(list(self.brands), f, indent=2)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save brands: {str(e)}")
@@ -1218,7 +1279,7 @@ class CigarInventory:
     def save_sets(self, filename, data_set):
         """Save a set to a JSON file."""
         try:
-            with open(resource_path(filename), 'w') as f:
+            with open(self.get_data_file_path(filename), 'w') as f:
                 json.dump(list(data_set), f, indent=2)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save {filename}: {str(e)}")
@@ -1592,6 +1653,7 @@ class CigarInventory:
         selected_cigars = []
         sale_records = []
         sale_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        transaction_id = str(uuid.uuid4())  # Generate unique transaction ID
         
         # Process each selected cigar
         for cigar in self.inventory:
@@ -1614,6 +1676,7 @@ class CigarInventory:
 
                     # Create sale record
                     sale_record = {
+                        'transaction_id': transaction_id,  # Add transaction ID
                         'date': sale_date,
                         'brand': cigar.get('brand', ''),
                         'cigar': cigar_name,
@@ -1700,7 +1763,7 @@ class CigarInventory:
     def save_sales_history(self):
         """Save sales history to JSON file."""
         try:
-            with open(resource_path('sales_history.json'), 'w') as f:
+            with open(self.get_data_file_path('sales_history.json'), 'w') as f:
                 json.dump(self.sales_history, f, indent=2)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save sales history: {str(e)}")
@@ -1708,7 +1771,7 @@ class CigarInventory:
     def load_sales_history(self):
         """Load sales history from JSON file."""
         try:
-            with open(resource_path('sales_history.json'), 'r') as f:
+            with open(self.get_data_file_path('sales_history.json'), 'r') as f:
                 self.sales_history = json.load(f)
                 
             # Update old format records to new format
@@ -1717,39 +1780,18 @@ class CigarInventory:
                     sale['quantity'] = 1
                 if 'total_cost' not in sale:
                     sale['total_cost'] = float(sale['price_per_stick'])
+                # Add transaction_id to older records that don't have it
+                if 'transaction_id' not in sale:
+                    # Generate a unique transaction ID based on date and cigar name
+                    # This groups sales that happened at the same time
+                    sale['transaction_id'] = str(uuid.uuid5(uuid.NAMESPACE_DNS, 
+                                                          f"{sale.get('date', '')}-{sale.get('cigar', '')}"))
                     
         except FileNotFoundError:
             self.sales_history = []
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load sales history: {str(e)}")
             self.sales_history = []
-
-    def refresh_sales_history(self):
-        """Refresh the sales history display."""
-        # Clear current display
-        for item in self.sales_tree.get_children():
-            self.sales_tree.delete(item)
-            
-        # Add all sales records
-        for sale in reversed(self.sales_history):  # Show newest first
-            try:
-                # Ensure all required fields exist
-                quantity = sale.get('quantity', 1)
-                price_per_stick = float(sale.get('price_per_stick', 0))
-                total_cost = sale.get('total_cost', price_per_stick * quantity)
-                
-                values = (
-                    sale.get('date', ''),
-                    sale.get('brand', ''),
-                    sale.get('cigar', ''),
-                    sale.get('size', ''),
-                    f"${price_per_stick:.2f}",
-                    str(quantity),
-                    f"${total_cost:.2f}"
-                )
-                self.sales_tree.insert('', 'end', values=values)
-            except Exception as e:
-                print(f"Error displaying sale record: {e}")
 
     def manual_save(self):
         """Manually save all data and show confirmation."""
@@ -1768,6 +1810,737 @@ class CigarInventory:
             messagebox.showinfo("Success", "All data has been saved successfully!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save data: {str(e)}")
+
+    def on_transaction_select(self, event):
+        """Handle selection of a transaction in the transaction list."""
+        selected_item = self.transaction_tree.selection()
+        if not selected_item:
+            self.current_transaction_id = None
+            self.detail_tree.delete(*self.detail_tree.get_children())
+            return
+
+        selected_item = selected_item[0]  # Get the first selected item
+        # Get transaction_id from our mapping
+        self.current_transaction_id = self.transaction_id_map.get(selected_item)
+
+        # Refresh the transaction details
+        self.refresh_transaction_details()
+
+    def refresh_transaction_details(self):
+        """Refresh the details view for the currently selected transaction."""
+        # Clear existing details
+        self.detail_tree.delete(*self.detail_tree.get_children())
+
+        if not self.current_transaction_id:
+            return
+
+        # Load and display details for the selected transaction
+        for sale in self.sales_history:
+            if sale.get('transaction_id') == self.current_transaction_id:
+                # Get all the sale details
+                cigar_name = sale.get('cigar', 'Unknown')
+                brand = sale.get('brand', 'Unknown')
+                size = sale.get('size', 'N/A')
+                quantity = int(sale.get('quantity', 1))
+                price_per_stick = float(sale.get('price_per_stick', 0))
+                total_cost = float(sale.get('total_cost', 0))
+                
+                values = (
+                    cigar_name,
+                    brand,
+                    size,
+                    str(quantity),
+                    f"${price_per_stick:.2f}",
+                    f"${total_cost:.2f}"
+                )
+                self.detail_tree.insert('', 'end', values=values)
+
+    def return_selected_items(self):
+        """Handle partial return of selected items from the current transaction."""
+        selected_items = self.detail_tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Warning", "Please select items to return.")
+            return
+
+        if not self.current_transaction_id:
+            messagebox.showwarning("Warning", "No transaction selected.")
+            return
+
+        # Collect information about selected items
+        items_data = []
+        for item_id in selected_items:
+            values = self.detail_tree.item(item_id)['values']
+            if values:
+                cigar_name = values[0]
+                brand = values[1]
+                current_qty = int(values[3])
+                items_data.append((cigar_name, brand, current_qty))
+
+        if not items_data:
+            return
+
+        # Show single dialog for all return quantities
+        return_quantities = self.ask_multiple_return_quantities(items_data)
+        
+        if not return_quantities:
+            return  # User cancelled or no items to return
+
+        # Process the returns
+        self.process_returns(return_quantities)
+
+    def ask_multiple_return_quantities(self, items_data):
+        """Show a single dialog to set return quantities for multiple items."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Return Quantities")
+        dialog.geometry("700x500")  # Made wider for side-by-side layout
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (350)  # Half of 700
+        y = (dialog.winfo_screenheight() // 2) - (250)  # Half of 500
+        dialog.geometry(f"700x500+{x}+{y}")
+
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="15")
+        main_frame.pack(fill='both', expand=True)
+
+        # Header
+        ttk.Label(main_frame, text="Set Return Quantities", 
+                 font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Set the quantity to return for each item:").pack(pady=(0, 15))
+
+        # Create horizontal layout: items on left, buttons on right
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(fill='both', expand=True)
+
+        # Left side: Scrollable frame for items
+        left_frame = ttk.Frame(content_frame)
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 15))
+
+        canvas = tk.Canvas(left_frame)
+        scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Store spinbox references
+        quantity_vars = {}
+
+        # Create quantity controls for each item
+        for i, (cigar_name, brand, max_qty) in enumerate(items_data):
+            item_frame = ttk.LabelFrame(scrollable_frame, text=f"{brand} - {cigar_name}", padding="10")
+            item_frame.pack(fill='x', pady=5, padx=5)
+
+            # Current available quantity
+            ttk.Label(item_frame, text=f"Sold quantity: {max_qty}").pack(anchor='w')
+
+            # Quantity selection
+            qty_frame = ttk.Frame(item_frame)
+            qty_frame.pack(fill='x', pady=(10, 0))
+
+            ttk.Label(qty_frame, text="Return quantity:").pack(side='left')
+            
+            var = tk.IntVar(value=max_qty)  # Default to returning all
+            quantity_vars[cigar_name] = var
+            
+            spinbox = ttk.Spinbox(qty_frame, from_=0, to=max_qty, 
+                                 textvariable=var, width=10)
+            spinbox.pack(side='right')
+
+        # Right side: Button panel
+        button_panel = ttk.Frame(content_frame)
+        button_panel.pack(side='right', fill='y')
+
+        # Results storage
+        result = {}
+
+        def confirm_quantities():
+            # Collect return quantities
+            for cigar_name, brand, max_qty in items_data:
+                return_qty = quantity_vars[cigar_name].get()
+                if return_qty > 0:
+                    result[cigar_name] = (brand, return_qty, max_qty)
+            dialog.destroy()
+
+        def cancel_quantities():
+            dialog.destroy()
+
+        def select_all():
+            """Set all quantities to maximum."""
+            for cigar_name, _, max_qty in items_data:
+                quantity_vars[cigar_name].set(max_qty)
+
+        def clear_all():
+            """Set all quantities to 0."""
+            for cigar_name, _, _ in items_data:
+                quantity_vars[cigar_name].set(0)
+
+        # Stack buttons vertically on the right
+        ttk.Button(button_panel, text="Select All", command=select_all, 
+                  width=15).pack(pady=(0, 10), fill='x')
+        
+        ttk.Button(button_panel, text="Confirm", command=confirm_quantities, 
+                  width=15).pack(pady=(0, 10), fill='x')
+        
+        ttk.Button(button_panel, text="Clear All", command=clear_all, 
+                  width=15).pack(pady=(0, 10), fill='x')
+        
+        ttk.Button(button_panel, text="Cancel", command=cancel_quantities, 
+                  width=15).pack(fill='x')
+
+        # Add mouse wheel scrolling
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind("<MouseWheel>", on_mousewheel)
+
+        dialog.wait_window()
+        return result
+
+    def process_returns(self, return_quantities):
+        """Process the returns and show confirmation."""
+        if not return_quantities:
+            return
+
+        # Create return list for confirmation
+        return_list = []
+        for cigar_name, (brand, return_qty, max_qty) in return_quantities.items():
+            return_list.append((cigar_name, brand, return_qty, max_qty))
+
+        # Show confirmation dialog
+        self.show_return_confirmation(return_list)
+
+    def show_return_confirmation(self, return_list):
+        """Show a single confirmation dialog for all items being returned."""
+        # Create confirmation dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Confirm Returns")
+        dialog.geometry("650x450")  # Made wider
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Set minimum size to prevent buttons from being hidden
+        dialog.minsize(550, 350)
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (325)  # Half of 650
+        y = (dialog.winfo_screenheight() // 2) - (225)  # Half of 450
+        dialog.geometry(f"650x450+{x}+{y}")
+
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="15")
+        main_frame.pack(fill='both', expand=True)
+
+        # Header
+        ttk.Label(main_frame, text="Confirm Return", 
+                 font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Are you sure you want to return the following items?").pack(pady=(0, 15))
+
+        # Create horizontal layout: tree on left, buttons on right
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(fill='both', expand=True)
+        
+        # Configure content_frame grid weights to ensure proper resizing
+        content_frame.grid_columnconfigure(0, weight=3)  # Tree gets more space
+        content_frame.grid_columnconfigure(1, weight=1)  # Button panel gets fixed space
+        content_frame.grid_rowconfigure(0, weight=1)     # Allow vertical expansion
+
+        # Left side: Items list in a treeview
+        tree_frame = ttk.Frame(content_frame)
+        tree_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 15))
+
+        columns = ('item', 'quantity')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=12)
+        
+        tree.heading('item', text='Item')
+        tree.heading('quantity', text='Return Qty')
+        
+        tree.column('item', width=400)  # Made wider
+        tree.column('quantity', width=100)
+
+        # Add scrollbar for tree
+        scrollbar = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack tree and scrollbar
+        tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        # Populate the tree with return items
+        total_items = 0
+        for cigar_name, brand, return_qty, _ in return_list:
+            values = (f"{brand} - {cigar_name}", str(return_qty))
+            tree.insert('', 'end', values=values)
+            total_items += return_qty
+
+        # Right side: Buttons and summary stacked vertically
+        button_panel = ttk.Frame(content_frame)
+        button_panel.grid(row=0, column=1, sticky='nsew', padx=(0, 0))
+
+        # Total summary at top of button panel
+        summary_frame = ttk.LabelFrame(button_panel, text="Summary", padding="10")
+        summary_frame.pack(fill='x', pady=(0, 20))
+        
+        ttk.Label(summary_frame, text=f"Total items to return:", 
+                 font=('TkDefaultFont', 9)).pack()
+        ttk.Label(summary_frame, text=f"{total_items}", 
+                 font=('TkDefaultFont', 11, 'bold')).pack()
+
+        # Button frame - always stays visible at bottom
+        button_frame = ttk.Frame(button_panel)
+        button_frame.pack(fill='x', side='bottom', pady=(20, 0))
+
+        def confirm_return():
+            # Process each return
+            for cigar_name, brand, return_qty, original_qty in return_list:
+                # Add back to inventory
+                for cigar in self.inventory:
+                    if cigar['cigar'] == cigar_name:
+                        cigar['count'] = int(cigar['count']) + return_qty
+                        break
+
+                # Update or remove sales records
+                for sale in self.sales_history:
+                    if (sale.get('transaction_id') == self.current_transaction_id and 
+                        sale.get('cigar') == cigar_name):
+                        
+                        current_sale_qty = int(sale.get('quantity', 1))
+                        if return_qty >= current_sale_qty:
+                            # Remove entire sale record
+                            self.sales_history.remove(sale)
+                        else:
+                            # Reduce quantity and recalculate cost
+                            new_qty = current_sale_qty - return_qty
+                            sale['quantity'] = new_qty
+                            price_per_stick = float(sale.get('price_per_stick', 0))
+                            sale['total_cost'] = price_per_stick * new_qty
+                        break
+
+            # Save changes and refresh displays
+            self.save_inventory()
+            self.save_sales_history()
+            self.refresh_inventory()
+            self.refresh_sales_history()
+            self.update_inventory_totals()
+            
+            dialog.destroy()
+            messagebox.showinfo("Success", f"Successfully returned {total_items} items.")
+
+        def cancel_return():
+            dialog.destroy()
+
+        # Stack buttons vertically with proper spacing
+        ttk.Button(button_frame, text="Confirm Return", command=confirm_return, 
+                  width=18).pack(pady=(0, 10), fill='x')
+        ttk.Button(button_frame, text="Cancel", command=cancel_return, 
+                  width=18).pack(fill='x')
+
+    def return_entire_transaction(self):
+        """Handle returning the entire current transaction."""
+        if not self.current_transaction_id:
+            messagebox.showwarning("Warning", "No transaction selected.")
+            return
+
+        # Get all items in the transaction
+        transaction_items = []
+        total_items = 0
+        total_value = 0.0
+        
+        for sale in self.sales_history:
+            if sale.get('transaction_id') == self.current_transaction_id:
+                quantity = int(sale.get('quantity', 1))
+                total_cost = float(sale.get('total_cost', 0))
+                transaction_items.append((sale.get('cigar'), sale.get('brand'), quantity))
+                total_items += quantity
+                total_value += total_cost
+
+        if not transaction_items:
+            messagebox.showwarning("Warning", "No items found in this transaction.")
+            return
+
+        # Get transaction date for confirmation
+        transaction_date = "Unknown"
+        for sale in self.sales_history:
+            if sale.get('transaction_id') == self.current_transaction_id:
+                transaction_date = sale.get('date', 'Unknown')
+                break
+
+        confirm_msg = f"Are you sure you want to return the entire transaction?\n\n"
+        confirm_msg += f"Date: {transaction_date}\n"
+        confirm_msg += f"Total items: {total_items}\n"
+        confirm_msg += f"Total value: ${total_value:.2f}\n\n"
+        confirm_msg += "Items to return:\n"
+        for cigar_name, brand, quantity in transaction_items:
+            confirm_msg += f"• {quantity}x {brand} - {cigar_name}\n"
+
+        if messagebox.askyesno("Confirm Return", confirm_msg):
+            # Return all items to inventory
+            for cigar_name, _, quantity in transaction_items:
+                for cigar in self.inventory:
+                    if cigar['cigar'] == cigar_name:
+                        cigar['count'] = int(cigar['count']) + quantity
+                        break
+
+            # Remove all sales records for this transaction
+            self.sales_history = [sale for sale in self.sales_history 
+                                if sale.get('transaction_id') != self.current_transaction_id]
+
+            # Clear current transaction selection
+            self.current_transaction_id = None
+
+            # Save changes and refresh displays
+            self.save_inventory()
+            self.save_sales_history()
+            self.refresh_inventory()
+            self.refresh_sales_history()
+            self.update_inventory_totals()
+            
+            messagebox.showinfo("Success", f"Successfully returned entire transaction ({total_items} items).")
+
+    def ask_return_quantity(self, item_name, max_quantity):
+        """Ask user how many items to return."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Return Quantity")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Set a reasonable minimum size
+        dialog.minsize(400, 250)
+
+        result = tk.IntVar(value=max_quantity)
+
+        # Main frame with padding
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill='both', expand=True)
+
+        # Item name label
+        ttk.Label(main_frame, text=f"Return quantity for:", font=('TkDefaultFont', 9)).pack(pady=(0, 5))
+        ttk.Label(main_frame, text=item_name, font=('TkDefaultFont', 9, 'bold')).pack(pady=(0, 15))
+        
+        # Maximum quantity label
+        ttk.Label(main_frame, text=f"Maximum: {max_quantity}").pack(pady=(0, 15))
+        
+        # Quantity input frame
+        qty_frame = ttk.Frame(main_frame)
+        qty_frame.pack(pady=(0, 20))
+        
+        ttk.Label(qty_frame, text="Quantity:").pack(side='left', padx=(0, 10))
+        spinbox = ttk.Spinbox(qty_frame, from_=0, to=max_quantity, 
+                             textvariable=result, width=10)
+        spinbox.pack(side='left')
+
+        # Button frame with adequate spacing
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=(20, 0))
+
+        def confirm():
+            dialog.destroy()
+
+        def cancel():
+            result.set(0)
+            dialog.destroy()
+
+        ttk.Button(button_frame, text="Return", command=confirm, width=12).pack(side='left', padx=(0, 20))
+        ttk.Button(button_frame, text="Cancel", command=cancel, width=12).pack(side='left')
+
+        # Center the dialog after setting up all widgets
+        dialog.update_idletasks()
+        dialog_width = dialog.winfo_reqwidth()
+        dialog_height = dialog.winfo_reqheight()
+        
+        # Ensure minimum size
+        dialog_width = max(dialog_width, 400)
+        dialog_height = max(dialog_height, 250)
+        
+        # Center on screen
+        x = (dialog.winfo_screenwidth() // 2) - (dialog_width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog_height // 2)
+        
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+
+        spinbox.focus()
+        dialog.wait_window()
+        
+        return result.get()
+
+    def get_data_file_path(self, filename):
+        """Get the full path for a data file in the current data directory."""
+        return os.path.join(self.data_directory, filename)
+
+    def update_location_display(self):
+        """Update the location display labels."""
+        self.location_label.config(text=self.data_directory)
+        self.humidor_label.config(text=self.humidor_name)
+        # Update window title to include humidor name
+        self.root.title(f"Cigar Inventory Manager - {self.humidor_name}")
+
+    def change_data_directory(self):
+        """Allow user to change the data directory."""
+        new_directory = filedialog.askdirectory(
+            title="Select Data Directory",
+            initialdir=self.data_directory
+        )
+        
+        if new_directory:
+            self.data_directory = new_directory
+            # Try to determine humidor name from directory
+            dir_name = os.path.basename(new_directory)
+            if dir_name and dir_name != ".":
+                self.humidor_name = dir_name
+            else:
+                self.humidor_name = "Custom Location"
+            
+            self.update_location_display()
+            self.status_label.config(text="Directory changed - Loading data...", foreground='orange')
+            
+            # Reload data from new directory
+            try:
+                self.load_inventory()
+                self.refresh_inventory()
+                self.refresh_sales_history()
+                self.status_label.config(text="Data loaded successfully", foreground='green')
+            except Exception as e:
+                self.status_label.config(text=f"Error loading data: {str(e)}", foreground='red')
+                messagebox.showerror("Error", f"Failed to load data from new directory: {str(e)}")
+
+    def new_humidor(self):
+        """Create a new humidor in a new directory."""
+        # Ask for humidor name
+        humidor_name = tk.simpledialog.askstring(
+            "New Humidor",
+            "Enter name for the new humidor:",
+            initialvalue="My Humidor"
+        )
+        
+        if not humidor_name:
+            return
+            
+        # Ask for directory location
+        parent_directory = filedialog.askdirectory(
+            title="Select Parent Directory for New Humidor",
+            initialdir=os.path.dirname(self.data_directory)
+        )
+        
+        if not parent_directory:
+            return
+            
+        # Create new directory
+        new_directory = os.path.join(parent_directory, humidor_name.replace(" ", "_"))
+        
+        try:
+            if not os.path.exists(new_directory):
+                os.makedirs(new_directory)
+            
+            # Set new directory and name
+            self.data_directory = new_directory
+            self.humidor_name = humidor_name
+            self.update_location_display()
+            
+            # Clear current data
+            self.inventory = []
+            self.brands = set()
+            self.sizes = set()
+            self.types = set()
+            self.sales_history = []
+            self.checkbox_states = {}
+            
+            # Save empty data files
+            self.save_inventory()
+            self.save_brands()
+            self.save_sets('cigar_sizes.json', self.sizes)
+            self.save_sets('cigar_types.json', self.types)
+            self.save_sales_history()
+            
+            # Refresh displays
+            self.refresh_inventory()
+            self.refresh_sales_history()
+            
+            self.status_label.config(text=f"New humidor '{humidor_name}' created", foreground='green')
+            messagebox.showinfo("Success", f"New humidor '{humidor_name}' created successfully!")
+            
+        except Exception as e:
+            self.status_label.config(text=f"Error creating humidor: {str(e)}", foreground='red')
+            messagebox.showerror("Error", f"Failed to create new humidor: {str(e)}")
+
+    def load_humidor(self):
+        """Load an existing humidor from a directory."""
+        new_directory = filedialog.askdirectory(
+            title="Select Humidor Directory",
+            initialdir=os.path.dirname(self.data_directory)
+        )
+        
+        if new_directory:
+            # Check if directory contains cigar inventory files
+            inventory_file = os.path.join(new_directory, 'cigar_inventory.json')
+            
+            if not os.path.exists(inventory_file):
+                if messagebox.askyesno("No Data Found", 
+                    "This directory doesn't contain cigar inventory data. Create new humidor here?"):
+                    # Get humidor name
+                    dir_name = os.path.basename(new_directory)
+                    humidor_name = tk.simpledialog.askstring(
+                        "Humidor Name",
+                        "Enter name for this humidor:",
+                        initialvalue=dir_name if dir_name != "." else "New Humidor"
+                    )
+                    
+                    if humidor_name:
+                        self.data_directory = new_directory
+                        self.humidor_name = humidor_name
+                        self.update_location_display()
+                        
+                        # Clear and save empty data
+                        self.inventory = []
+                        self.brands = set()
+                        self.sizes = set()
+                        self.types = set()
+                        self.sales_history = []
+                        self.checkbox_states = {}
+                        
+                        self.save_inventory()
+                        self.save_brands()
+                        self.save_sets('cigar_sizes.json', self.sizes)
+                        self.save_sets('cigar_types.json', self.types)
+                        self.save_sales_history()
+                        
+                        self.refresh_inventory()
+                        self.refresh_sales_history()
+                        
+                        self.status_label.config(text=f"New humidor created", foreground='green')
+                return
+            
+            # Load existing humidor
+            self.data_directory = new_directory
+            dir_name = os.path.basename(new_directory)
+            self.humidor_name = dir_name if dir_name != "." else "Loaded Humidor"
+            
+            self.update_location_display()
+            self.status_label.config(text="Loading humidor data...", foreground='orange')
+            
+            try:
+                self.load_inventory()
+                self.refresh_inventory()
+                self.refresh_sales_history()
+                self.status_label.config(text=f"Humidor '{self.humidor_name}' loaded", foreground='green')
+            except Exception as e:
+                self.status_label.config(text=f"Error loading data: {str(e)}", foreground='red')
+                messagebox.showerror("Error", f"Failed to load humidor data: {str(e)}")
+
+    def backup_data(self):
+        """Create a backup of the current humidor data."""
+        if not self.inventory and not self.sales_history:
+            messagebox.showwarning("Warning", "No data to backup.")
+            return
+            
+        # Ask for backup location
+        backup_file = filedialog.asksaveasfilename(
+            title="Save Backup As",
+            defaultextension=".zip",
+            filetypes=[("Zip files", "*.zip"), ("All files", "*.*")],
+            initialvalue=f"{self.humidor_name}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        )
+        
+        if backup_file:
+            try:
+                import zipfile
+                import glob
+                
+                with zipfile.ZipFile(backup_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    # Add all JSON files from the data directory
+                    json_files = glob.glob(os.path.join(self.data_directory, "*.json"))
+                    for file_path in json_files:
+                        filename = os.path.basename(file_path)
+                        zipf.write(file_path, filename)
+                    
+                    # Add a metadata file with humidor info
+                    metadata = {
+                        "humidor_name": self.humidor_name,
+                        "data_directory": self.data_directory,
+                        "backup_date": datetime.now().isoformat(),
+                        "inventory_count": len(self.inventory),
+                        "sales_count": len(self.sales_history)
+                    }
+                    
+                    import json
+                    zipf.writestr("backup_metadata.json", json.dumps(metadata, indent=2))
+                
+                self.status_label.config(text="Backup created successfully", foreground='green')
+                messagebox.showinfo("Success", f"Backup created: {backup_file}")
+                
+            except Exception as e:
+                self.status_label.config(text=f"Backup failed: {str(e)}", foreground='red')
+                messagebox.showerror("Error", f"Failed to create backup: {str(e)}")
+
+    def refresh_sales_history(self):
+        """Refresh the sales history display with transaction grouping."""
+        # Clear current display
+        for item in self.transaction_tree.get_children():
+            self.transaction_tree.delete(item)
+            
+        # Clear detail view if no transaction is selected
+        if not hasattr(self, 'current_transaction_id') or not self.current_transaction_id:
+            for item in self.detail_tree.get_children():
+                self.detail_tree.delete(item)
+        
+        # Group sales by transaction_id
+        transactions = {}
+        for sale in self.sales_history:
+            transaction_id = sale.get('transaction_id', 'unknown')
+            if transaction_id not in transactions:
+                transactions[transaction_id] = []
+            transactions[transaction_id].append(sale)
+        
+        # Store transaction ID mapping for later retrieval
+        if not hasattr(self, 'transaction_id_map'):
+            self.transaction_id_map = {}
+        
+        # Display transactions (newest first)
+        sorted_transactions = sorted(
+            transactions.items(), 
+            key=lambda x: x[1][0].get('date', ''), 
+            reverse=True
+        )
+        
+        for transaction_id, sales in sorted_transactions:
+            try:
+                # Calculate transaction totals
+                total_items = sum(int(sale.get('quantity', 1)) for sale in sales)
+                total_value = sum(float(sale.get('total_cost', 0)) for sale in sales)
+                
+                # Use the date from the first sale in the transaction
+                date = sales[0].get('date', 'Unknown')
+                
+                # Create transaction summary
+                values = (
+                    date,
+                    str(total_items),
+                    f"${total_value:.2f}"
+                )
+                
+                # Insert the item and store the transaction_id in our mapping
+                item_id = self.transaction_tree.insert('', 'end', values=values)
+                self.transaction_id_map[item_id] = transaction_id
+                
+            except Exception as e:
+                print(f"Error displaying transaction {transaction_id}: {e}")
+        
+        # If we have a current transaction selected, refresh its details
+        if hasattr(self, 'current_transaction_id') and self.current_transaction_id:
+            self.refresh_transaction_details()
 
 def main():
     try:
