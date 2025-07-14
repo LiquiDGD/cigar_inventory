@@ -24,7 +24,7 @@ def kill_running_app():
     """Kill any running instances of the application."""
     for proc in psutil.process_iter(['pid', 'name']):
         try:
-            if proc.info['name'] == 'CigarInventoryManager.exe':
+            if proc.info['name'] == 'Cigar Inventory.exe':
                 proc.kill()
                 time.sleep(1)  # Give the process time to terminate
         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -32,7 +32,7 @@ def kill_running_app():
 
 def clean_build_files():
     """Clean up old build files."""
-    paths_to_clean = ['build', 'dist', '__pycache__', 'CigarInventoryManager.spec']
+    paths_to_clean = ['build', 'dist', '__pycache__', 'Cigar Inventory.spec']
     
     for path in paths_to_clean:
         try:
@@ -76,7 +76,8 @@ def build_executable():
             '--noconfirm',
             '--onefile',
             '--windowed',
-            '--name=CigarInventoryManager',
+            '--icon=cigar.ico',
+            '--name=Cigar Inventory',
             '--add-data=cigar_inventory.json;.',
             '--add-data=cigar_brands.json;.',
             '--add-data=cigar_sizes.json;.',

@@ -731,13 +731,14 @@ class CigarInventory:
                 
                 # Check for duplicates after updating brand
                 if current_cigar and column == 'brand':
-                    # Get the updated brand and cigar name
+                    # Get the updated brand, cigar name, and size
                     updated_brand = current_cigar.get('brand', '')
                     updated_cigar_name = current_cigar.get('cigar', '')
+                    updated_size = current_cigar.get('size', '')
                     
                     # Check if this combination now matches another cigar
                     duplicate_cigar = self.check_for_duplicate_cigar_excluding_current(
-                        updated_brand, updated_cigar_name, current_cigar_name)
+                        updated_brand, updated_cigar_name, updated_size, current_cigar_name)
                     
                     if duplicate_cigar:
                         # Offer to combine
@@ -992,15 +993,16 @@ class CigarInventory:
                             cigar[column] = value
                             break
                     
-                    # Check for duplicates after updating brand or cigar name
-                    if current_cigar and column in ['brand', 'cigar']:
-                        # Get the updated brand and cigar name
+                    # Check for duplicates after updating brand, cigar name, or size
+                    if current_cigar and column in ['brand', 'cigar', 'size']:
+                        # Get the updated brand, cigar name, and size
                         updated_brand = current_cigar.get('brand', '')
                         updated_cigar_name = current_cigar.get('cigar', '')
+                        updated_size = current_cigar.get('size', '')
                         
                         # Check if this combination now matches another cigar
                         duplicate_cigar = self.check_for_duplicate_cigar_excluding_current(
-                            updated_brand, updated_cigar_name, current_cigar_name)
+                            updated_brand, updated_cigar_name, updated_size, current_cigar_name)
                         
                         if duplicate_cigar:
                             # Offer to combine
@@ -2092,7 +2094,7 @@ class CigarInventory:
                     
                     # Check for duplicates
                     existing_cigar = self.check_for_duplicate_cigar(
-                        cigar_data['brand'], cigar_data['cigar'])
+                        cigar_data['brand'], cigar_data['cigar'], cigar_data['size'])
                     
                     if existing_cigar:
                         # Capture old values before combining
@@ -2192,20 +2194,22 @@ class CigarInventory:
         # Focus on first field
         total_shipping_entry.focus()
 
-    def check_for_duplicate_cigar(self, brand, cigar_name):
-        """Check if a cigar with the same brand and name already exists."""
+    def check_for_duplicate_cigar(self, brand, cigar_name, size):
+        """Check if a cigar with the same brand, name, and size already exists."""
         for existing_cigar in self.inventory:
             if (existing_cigar.get('brand', '').lower() == brand.lower() and 
-                existing_cigar.get('cigar', '').lower() == cigar_name.lower()):
+                existing_cigar.get('cigar', '').lower() == cigar_name.lower() and
+                existing_cigar.get('size', '').lower() == size.lower()):
                 return existing_cigar
         return None
 
-    def check_for_duplicate_cigar_excluding_current(self, brand, cigar_name, current_cigar_name):
-        """Check if a cigar with the same brand and name already exists, excluding the current one being edited."""
+    def check_for_duplicate_cigar_excluding_current(self, brand, cigar_name, size, current_cigar_name):
+        """Check if a cigar with the same brand, name, and size already exists, excluding the current one being edited."""
         for existing_cigar in self.inventory:
             if (existing_cigar.get('cigar', '') != current_cigar_name and
                 existing_cigar.get('brand', '').lower() == brand.lower() and 
-                existing_cigar.get('cigar', '').lower() == cigar_name.lower()):
+                existing_cigar.get('cigar', '').lower() == cigar_name.lower() and
+                existing_cigar.get('size', '').lower() == size.lower()):
                 return existing_cigar
         return None
 
