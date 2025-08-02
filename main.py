@@ -253,15 +253,15 @@ class CigarInventory:
         """Show a standalone shipping calculator dialog."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Shipping Calculator")
-        dialog.geometry("350x300")
+        dialog.geometry("400x480")
         dialog.transient(self.root)
         dialog.grab_set()
         
         # Center the dialog
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (175)
-        y = (dialog.winfo_screenheight() // 2) - (150)
-        dialog.geometry(f"350x300+{x}+{y}")
+        x = (dialog.winfo_screenwidth() // 2) - (200)
+        y = (dialog.winfo_screenheight() // 2) - (240)
+        dialog.geometry(f"400x480+{x}+{y}")
         
         # Main frame
         main_frame = ttk.Frame(dialog, padding="20")
@@ -284,10 +284,6 @@ class CigarInventory:
         total_cigars_var = tk.StringVar()
         total_cigars_entry = ttk.Entry(input_frame, textvariable=total_cigars_var, width=20)
         total_cigars_entry.pack(fill='x', pady=(0, 10))
-        
-        # Calculate button
-        ttk.Button(input_frame, text="Calculate", 
-                  command=lambda: calculate_shipping()).pack(pady=(5, 0))
         
         # Results frame
         results_frame = ttk.LabelFrame(main_frame, text="Results", padding="15")
@@ -328,6 +324,10 @@ class CigarInventory:
                 messagebox.showerror("Error", "Please enter valid numbers")
             except ZeroDivisionError:
                 messagebox.showerror("Error", "Total cigars must be greater than 0")
+        
+        # Calculate button
+        ttk.Button(input_frame, text="Calculate", 
+                  command=calculate_shipping).pack(pady=(5, 0))
         
         # Close button
         ttk.Button(main_frame, text="Close", command=dialog.destroy, width=15).pack(pady=(10, 0))
@@ -1528,7 +1528,8 @@ class CigarInventory:
                         'price': cigar_data['price'],
                         'shipping': equiv_shipping,
                         'price_per_stick': cigar_data['price_per_stick'],
-                        'personal_rating': None
+                        'personal_rating': None,
+                        'original_quantity': cigar_data['count']  # Store original quantity for cost basis
                     }
                     
                     self.inventory.append(new_cigar)
@@ -2091,7 +2092,12 @@ Version: 2.0
         if column == '#1':  # First column (checkbox)
             cigar_name = self.tree.item(item)['values'][2]  # Cigar name is now at index 2
             self.checkbox_states[cigar_name] = not self.checkbox_states.get(cigar_name, False)
-            self.refresh_inventory()
+            
+            # Update only the checkbox display for this specific row
+            current_values = list(self.tree.item(item)['values'])
+            current_values[0] = '☒' if self.checkbox_states[cigar_name] else '☐'
+            self.tree.item(item, values=current_values)
+            
             self.update_selected_cigars_display()  # Update the selected cigars display
             return
             
@@ -2577,8 +2583,10 @@ Version: 2.0
                 for cigar in self.inventory:
                     if cigar['cigar'] == name:
                         cigar['count'] = new_count
+                        # Update original_quantity to preserve cost basis
+                        cigar['original_quantity'] = new_count
                         cigar['price_per_stick'] = self.calculate_price_per_stick(
-                            cigar['price'], cigar['shipping'], new_count)
+                            cigar['price'], cigar['shipping'], new_count, new_count)
                         break
                         
                 self.save_inventory()
@@ -2686,22 +2694,14 @@ Version: 2.0
                 # Get checkbox state
                 is_selected = self.checkbox_states.get(cigar.get('cigar', ''), False)
                 
-                # For existing cigars (without original_quantity), use current calculation
-                # For new cigars (with original_quantity), use new calculation
-                if 'original_quantity' in cigar:
-                    price_per_stick = self.calculate_price_per_stick(
-                        cigar.get('price', 0),
-                        cigar.get('shipping', 0),
-                        cigar.get('count', 0),
-                        cigar.get('original_quantity')
-                    )
-                else:
-                    # Use existing calculation for old inventory
-                    price_per_stick = self.calculate_price_per_stick(
-                        cigar.get('price', 0),
-                        cigar.get('shipping', 0),
-                        cigar.get('count', 0)
-                    )
+                # All inventory items now have original_quantity field
+                # Use original_quantity for shipping distribution to preserve cost basis
+                price_per_stick = self.calculate_price_per_stick(
+                    cigar.get('price', 0),
+                    cigar.get('shipping', 0),
+                    cigar.get('count', 0),
+                    cigar.get('original_quantity', cigar.get('count', 0))
+                )
                 
                 values = [
                     '☒' if is_selected else '☐',
@@ -2787,6 +2787,10 @@ Version: 2.0
                                 cigar['shipping'], 
                                 cigar['count']
                             )
+                        
+                        # Add original_quantity field for existing inventory to preserve cost basis
+                        if 'original_quantity' not in cigar:
+                            cigar['original_quantity'] = cigar.get('count', 0)
             except FileNotFoundError:
                 self.inventory = []
         except Exception as e:
@@ -2863,14 +2867,16 @@ Version: 2.0
             'price': 0.0,
             'shipping': 0.0,
             'price_per_stick': 0.0,
-            'personal_rating': None
+            'personal_rating': None,
+            'original_quantity': 0  # Store the original quantity for cost basis
         }
         
         # Calculate initial price per stick using count=1 to avoid division by zero
         new_cigar['price_per_stick'] = self.calculate_price_per_stick(
             new_cigar['price'],
             new_cigar['shipping'],
-            1  # Always use 1 for initial calculation
+            1,  # Always use 1 for initial calculation
+            1   # Use 1 as original quantity for initial calculation
         )
         
         self.inventory.append(new_cigar)
@@ -3863,6 +3869,9 @@ Version: 2.0
             existing_cigar['shipping'] = combined_shipping  # Total shipping for all cigars
             existing_cigar['price_per_stick'] = combined_price_per_stick
             
+            # Update original_quantity to reflect the total combined quantity for cost basis
+            existing_cigar['original_quantity'] = combined_count
+            
             # Store the original purchase info for reference
             if 'purchase_history' not in existing_cigar:
                 existing_cigar['purchase_history'] = []
@@ -3881,6 +3890,7 @@ Version: 2.0
             existing_cigar['price'] = new_price
             existing_cigar['shipping'] = new_shipping
             existing_cigar['price_per_stick'] = self.calculate_price_per_stick(new_price, new_shipping, new_count)
+            existing_cigar['original_quantity'] = new_count  # Set original quantity for cost basis
 
     def sort_treeview(self, col):
         """Sort treeview by column."""
@@ -5187,6 +5197,10 @@ Version: 2.0
 
     def refresh_sales_history(self):
         """Refresh the sales history display with transaction grouping."""
+        # Check if the sales history UI has been created
+        if not hasattr(self, 'transaction_tree') or not hasattr(self, 'detail_tree'):
+            return  # UI not created yet, skip refresh
+            
         # Clear current display
         for item in self.transaction_tree.get_children():
             self.transaction_tree.delete(item)
