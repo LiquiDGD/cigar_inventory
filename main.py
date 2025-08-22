@@ -1535,20 +1535,20 @@ class CigarInventory:
                     self.inventory.append(new_cigar)
                     added_count += 1
             
-                            # Save all changes
-                self.save_inventory()
-                self.save_resupply_history()
-                self.save_brands()
-                self.save_sets('cigar_sizes.json', self.sizes)
-                self.save_sets('cigar_types.json', self.types)
-                self.save_humidor_settings()
-                
-                # Clear order and refresh
-                self.current_resupply_order.clear()
-                self.calculate_resupply_costs()
-                self.refresh_inventory()
-                self.update_inventory_totals()
-                self.refresh_resupply_dropdowns()
+            # Save all changes
+            self.save_inventory()
+            self.save_resupply_history()
+            self.save_brands()
+            self.save_sets('cigar_sizes.json', self.sizes)
+            self.save_sets('cigar_types.json', self.types)
+            self.save_humidor_settings()
+            
+            # Clear order and refresh
+            self.current_resupply_order.clear()
+            self.calculate_resupply_costs()
+            self.refresh_inventory()
+            self.update_inventory_totals()
+            self.refresh_resupply_dropdowns()
             
             # Show success message
             message = f"Order processed successfully!\n\n"
