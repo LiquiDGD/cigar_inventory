@@ -39,7 +39,7 @@ class CigarInventory:
     def __init__(self, root):
         self.root = root
         self.root.title("Cigar Inventory Manager")
-        self.root.geometry("1500x900")  # Made taller for calculator
+        self.root.geometry("1500x1000")  # Made taller for better button spacing
         
         # Initialize data directory (start with project directory for safety)
         self.data_directory = os.path.abspath(".")
@@ -80,6 +80,11 @@ class CigarInventory:
         self.sizes = set()
         self.types = set()
         self.tax_rate = 0.086
+        self.luxury_tax_rate = 0.285  # 28.5% luxury tax
+        self.luxury_tax_cap = 0.285  # 28.5 cents per cigar cap
+        self.humidor_type = "personal"  # "personal" or "business"
+        self.dor_tax_rate = 0.0  # Department of Revenue tax rate
+        self.distributor_tax_rate = 0.0  # Distributor tax rate
         self.checkbox_states = {}
         self.sales_history = []
         self.resupply_history = []
@@ -237,6 +242,11 @@ class CigarInventory:
         tools_menu.add_command(label="Add New Size...", command=self.add_new_size)
         tools_menu.add_command(label="Add New Type...", command=self.add_new_type)
         
+        # Settings menu
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        settings_menu.add_command(label="Humidor Settings...", command=self.show_humidor_settings)
+        
         # Help menu (for future expansion)
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -368,14 +378,14 @@ class CigarInventory:
         self.resupply_total_shipping_entry = ttk.Entry(totals_frame, textvariable=self.resupply_total_shipping_var, width=15)
         self.resupply_total_shipping_entry.grid(row=0, column=1, padx=(0, 20))
         
-        # Tax rate setting
-        ttk.Label(totals_frame, text="Tax Rate (%):").grid(row=0, column=2, sticky='w', padx=(0, 10))
+        # Purchase tax rate setting
+        ttk.Label(totals_frame, text="Purchase Tax Rate (%):").grid(row=0, column=2, sticky='w', padx=(0, 10))
         self.resupply_tax_rate_var = tk.StringVar(value=str(self.tax_rate * 100))
         self.resupply_tax_rate_entry = ttk.Entry(totals_frame, textvariable=self.resupply_tax_rate_var, width=10)
         self.resupply_tax_rate_entry.grid(row=0, column=3, padx=(0, 20))
         
-        # Total tax display
-        ttk.Label(totals_frame, text="Total Tax ($):").grid(row=0, column=4, sticky='w', padx=(0, 10))
+        # Total purchase tax display
+        ttk.Label(totals_frame, text="Total Purchase Tax ($):").grid(row=0, column=4, sticky='w', padx=(0, 10))
         self.resupply_total_tax_label = ttk.Label(totals_frame, text="$0.00", font=('TkDefaultFont', 9, 'bold'))
         self.resupply_total_tax_label.grid(row=0, column=5)
         
@@ -384,7 +394,7 @@ class CigarInventory:
         cigars_frame.pack(fill='both', expand=True, pady=(0, 15))
         
         # Create treeview for cigars in order
-        columns = ('brand', 'cigar', 'size', 'type', 'count', 'price', 'calc_shipping', 'calc_tax', 'price_per_stick')
+        columns = ('brand', 'cigar', 'size', 'type', 'count', 'weight', 'price', 'calc_shipping', 'calc_tax', 'calc_luxury_tax', 'price_per_stick', 'sale_price', 'instate')
         self.resupply_cigars_tree = ttk.Treeview(cigars_frame, columns=columns, show='headings', height=12)
         
         # Configure columns
@@ -393,20 +403,27 @@ class CigarInventory:
         self.resupply_cigars_tree.heading('size', text='Size')
         self.resupply_cigars_tree.heading('type', text='Type')
         self.resupply_cigars_tree.heading('count', text='Count')
-        self.resupply_cigars_tree.heading('price', text='Price')
+        self.resupply_cigars_tree.heading('weight', text='Weight')
+        self.resupply_cigars_tree.heading('price', text='Purchase Price')
         self.resupply_cigars_tree.heading('calc_shipping', text='Shipping')
         self.resupply_cigars_tree.heading('calc_tax', text='Tax')
+        self.resupply_cigars_tree.heading('calc_luxury_tax', text='Luxury Tax')
         self.resupply_cigars_tree.heading('price_per_stick', text='Price/Stick')
+        self.resupply_cigars_tree.heading('sale_price', text='Sale Price')
+        self.resupply_cigars_tree.heading('instate', text='In-State')
         
         self.resupply_cigars_tree.column('brand', width=100)
         self.resupply_cigars_tree.column('cigar', width=120)
         self.resupply_cigars_tree.column('size', width=70)
         self.resupply_cigars_tree.column('type', width=80)
         self.resupply_cigars_tree.column('count', width=60)
+        self.resupply_cigars_tree.column('weight', width=70)
         self.resupply_cigars_tree.column('price', width=80)
         self.resupply_cigars_tree.column('calc_shipping', width=80)
         self.resupply_cigars_tree.column('calc_tax', width=70)
+        self.resupply_cigars_tree.column('calc_luxury_tax', width=80)
         self.resupply_cigars_tree.column('price_per_stick', width=90)
+        self.resupply_cigars_tree.column('sale_price', width=80)
         
         # Add scrollbar
         resupply_cigars_scrollbar = ttk.Scrollbar(cigars_frame, orient='vertical', command=self.resupply_cigars_tree.yview)
@@ -426,75 +443,115 @@ class CigarInventory:
         self.current_resupply_order = []
         
         # === RIGHT FRAME: Add Item and Controls ===
-        # Add item frame
-        add_frame = ttk.LabelFrame(right_frame, text="Add Item to Order", padding="15")
-        add_frame.pack(fill='x', pady=(0, 15))
+        # Add item frame with better spacing
+        add_frame = ttk.LabelFrame(right_frame, text="Add Item to Order", padding="20")
+        add_frame.pack(fill='x', pady=(0, 20))
         
-        # Input fields
-        ttk.Label(add_frame, text="Brand:").pack(anchor='w', pady=(0, 5))
+        # Input fields - reduce width to fit better
+        ttk.Label(add_frame, text="Brand:").pack(anchor='w', pady=(0, 8))
         self.resupply_brand_var = tk.StringVar()
         self.resupply_brand_combo = ttk.Combobox(add_frame, textvariable=self.resupply_brand_var, 
                                                values=sorted(list(self.brands)), width=25)
-        self.resupply_brand_combo.pack(fill='x', pady=(0, 10))
+        self.resupply_brand_combo.pack(fill='x', pady=(0, 15))
         
-        ttk.Label(add_frame, text="Cigar:").pack(anchor='w', pady=(0, 5))
+        ttk.Label(add_frame, text="Cigar:").pack(anchor='w', pady=(0, 8))
         self.resupply_cigar_var = tk.StringVar()
         existing_cigars = sorted(list(set(cigar.get('cigar', '') for cigar in self.inventory if cigar.get('cigar', ''))))
         self.resupply_cigar_combo = ttk.Combobox(add_frame, textvariable=self.resupply_cigar_var, 
                                                values=existing_cigars, width=25)
-        self.resupply_cigar_combo.pack(fill='x', pady=(0, 10))
+        self.resupply_cigar_combo.pack(fill='x', pady=(0, 15))
         
-        ttk.Label(add_frame, text="Size:").pack(anchor='w', pady=(0, 5))
+        ttk.Label(add_frame, text="Size:").pack(anchor='w', pady=(0, 8))
         self.resupply_size_var = tk.StringVar()
         self.resupply_size_combo = ttk.Combobox(add_frame, textvariable=self.resupply_size_var, 
                                               values=sorted(list(self.sizes)), width=25)
-        self.resupply_size_combo.pack(fill='x', pady=(0, 10))
+        self.resupply_size_combo.pack(fill='x', pady=(0, 15))
         
-        ttk.Label(add_frame, text="Type:").pack(anchor='w', pady=(0, 5))
+        ttk.Label(add_frame, text="Type:").pack(anchor='w', pady=(0, 8))
         self.resupply_type_var = tk.StringVar()
         self.resupply_type_combo = ttk.Combobox(add_frame, textvariable=self.resupply_type_var, 
                                               values=sorted(list(self.types)), width=25)
-        self.resupply_type_combo.pack(fill='x', pady=(0, 10))
+        self.resupply_type_combo.pack(fill='x', pady=(0, 15))
         
-        ttk.Label(add_frame, text="Count:").pack(anchor='w', pady=(0, 5))
+        ttk.Label(add_frame, text="Count:").pack(anchor='w', pady=(0, 8))
         self.resupply_count_var = tk.StringVar()
         self.resupply_count_entry = ttk.Entry(add_frame, textvariable=self.resupply_count_var, width=25)
-        self.resupply_count_entry.pack(fill='x', pady=(0, 10))
+        self.resupply_count_entry.pack(fill='x', pady=(0, 15))
         
-        ttk.Label(add_frame, text="Price ($):").pack(anchor='w', pady=(0, 5))
+        ttk.Label(add_frame, text="Purchase Price ($):").pack(anchor='w', pady=(0, 8))
         self.resupply_price_var = tk.StringVar()
         self.resupply_price_entry = ttk.Entry(add_frame, textvariable=self.resupply_price_var, width=25)
         self.resupply_price_entry.pack(fill='x', pady=(0, 15))
         
+        ttk.Label(add_frame, text="Weight per Stick (oz):").pack(anchor='w', pady=(0, 8))
+        self.resupply_weight_var = tk.StringVar()
+        self.resupply_weight_entry = ttk.Entry(add_frame, textvariable=self.resupply_weight_var, width=25)
+        self.resupply_weight_entry.pack(fill='x', pady=(0, 15))
+        
+        ttk.Label(add_frame, text="Sale Price ($):").pack(anchor='w', pady=(0, 8))
+        self.resupply_sale_price_var = tk.StringVar()
+        self.resupply_sale_price_entry = ttk.Entry(add_frame, textvariable=self.resupply_sale_price_var, width=25)
+        self.resupply_sale_price_entry.pack(fill='x', pady=(0, 15))
+        
+        # In-state wholesaler checkbox
+        self.resupply_instate_var = tk.BooleanVar()
+        self.resupply_instate_checkbox = ttk.Checkbutton(
+            add_frame, 
+            text="In-State Wholesaler (No Purchase Tax)", 
+            variable=self.resupply_instate_var
+        )
+        self.resupply_instate_checkbox.pack(anchor='w', pady=(0, 15))
+        
         # Add to order button
         ttk.Button(add_frame, text="Add to Order", command=self.add_to_resupply_order, 
-                  width=25).pack(pady=(0, 10))
+                  width=30).pack(pady=(0, 20))
         
         # Order management buttons
-        management_frame = ttk.LabelFrame(right_frame, text="Order Management", padding="15")
-        management_frame.pack(fill='x', pady=(0, 15))
+        management_frame = ttk.LabelFrame(right_frame, text="Order Management", padding="20")
+        management_frame.pack(fill='x', pady=(0, 20))
         
-        ttk.Button(management_frame, text="Edit Selected", 
-                  command=self.edit_resupply_item, width=25).pack(pady=(0, 5))
-        ttk.Button(management_frame, text="Remove Selected", 
-                  command=self.remove_from_resupply_order, width=25).pack(pady=(0, 5))
-        ttk.Button(management_frame, text="Clear Order", 
-                  command=self.clear_resupply_order, width=25).pack(pady=(0, 5))
-        ttk.Button(management_frame, text="Process Order", 
-                  command=self.process_resupply_order, width=25).pack(pady=(0, 5))
+        # Create button frame for better organization
+        button_frame = ttk.Frame(management_frame)
+        button_frame.pack(fill='x', expand=True)
+        
+        # First row of buttons
+        button_row1 = ttk.Frame(button_frame)
+        button_row1.pack(fill='x', pady=(0, 5))
+        
+        ttk.Button(button_row1, text="Edit Selected", 
+                  command=self.edit_resupply_item, width=25).pack(side='left', padx=(0, 8))
+        ttk.Button(button_row1, text="Remove Selected", 
+                  command=self.remove_from_resupply_order, width=25).pack(side='left', padx=(0, 8))
+        ttk.Button(button_row1, text="Clear Order", 
+                  command=self.clear_resupply_order, width=25).pack(side='left', padx=(0, 8))
+        
+        # Second row with Process Order button - make it more prominent
+        button_row2 = ttk.Frame(button_frame)
+        button_row2.pack(fill='x')
+        
+        process_button = ttk.Button(button_row2, text="Process Order", 
+                                   command=self.process_resupply_order, width=30)
+        process_button.pack(side='left', pady=5)
+        
+        # Ensure the button is visible and prominent
+        process_button.lift()
         
         # Order summary
-        summary_frame = ttk.LabelFrame(right_frame, text="Order Summary", padding="15")
+        summary_frame = ttk.LabelFrame(right_frame, text="Order Summary", padding="20")
         summary_frame.pack(fill='x')
         
         self.resupply_summary_items_label = ttk.Label(summary_frame, text="Total Items: 0")
-        self.resupply_summary_items_label.pack(anchor='w', pady=2)
+        self.resupply_summary_items_label.pack(anchor='w', pady=5)
         
         self.resupply_summary_shipping_label = ttk.Label(summary_frame, text="Total Shipping Allocated: $0.00")
-        self.resupply_summary_shipping_label.pack(anchor='w', pady=2)
+        self.resupply_summary_shipping_label.pack(anchor='w', pady=5)
         
         self.resupply_summary_tax_label = ttk.Label(summary_frame, text="Total Tax Calculated: $0.00")
-        self.resupply_summary_tax_label.pack(anchor='w', pady=2)
+        self.resupply_summary_tax_label.pack(anchor='w', pady=5)
+        
+        # Add luxury tax summary label
+        self.resupply_summary_luxury_tax_label = ttk.Label(summary_frame, text="Total Luxury Tax (if out-of-state): $0.00")
+        self.resupply_summary_luxury_tax_label.pack(anchor='w', pady=5)
         
         # Bind events for automatic calculation
         self.resupply_total_shipping_var.trace('w', lambda *args: self.calculate_resupply_costs())
@@ -566,7 +623,7 @@ class CigarInventory:
         trans_scrollbar.pack(side='right', fill='y')
 
         # === RIGHT FRAME: Transaction Details ===
-        detail_columns = ('cigar', 'brand', 'size', 'quantity', 'price_per_stick', 'total_cost')
+        detail_columns = ('cigar', 'brand', 'size', 'quantity', 'price_per_stick', 'sales_tax', 'luxury_tax', 'personal_use', 'total_cost')
         detail_tree = ttk.Treeview(right_frame, columns=detail_columns, show='headings', height=10)
         
         detail_tree.heading('cigar', text='Cigar')
@@ -574,6 +631,9 @@ class CigarInventory:
         detail_tree.heading('size', text='Size')
         detail_tree.heading('quantity', text='Qty')
         detail_tree.heading('price_per_stick', text='Price/Stick')
+        detail_tree.heading('sales_tax', text='Sales Tax')
+        detail_tree.heading('luxury_tax', text='Luxury Tax')
+        detail_tree.heading('personal_use', text='Personal Use')
         detail_tree.heading('total_cost', text='Total')
         
         detail_tree.column('cigar', width=120)
@@ -581,6 +641,9 @@ class CigarInventory:
         detail_tree.column('size', width=70)
         detail_tree.column('quantity', width=50)
         detail_tree.column('price_per_stick', width=80)
+        detail_tree.column('sales_tax', width=80)
+        detail_tree.column('luxury_tax', width=80)
+        detail_tree.column('personal_use', width=80)
         detail_tree.column('total_cost', width=80)
 
         detail_scrollbar = ttk.Scrollbar(right_frame, orient='vertical', command=detail_tree.yview)
@@ -647,6 +710,9 @@ class CigarInventory:
                         sale.get('size', 'N/A'),
                         str(sale.get('quantity', 1)),
                         f"${float(sale.get('price_per_stick', 0)):.2f}",
+                        f"${float(sale.get('sales_tax', 0)):.2f}",
+                        f"${float(sale.get('luxury_tax', 0)):.2f}",
+                        "Yes" if sale.get('personal_use', False) else "No",
                         f"${float(sale.get('total_cost', 0)):.2f}"
                     )
                     detail_tree.insert('', 'end', values=values)
@@ -870,18 +936,20 @@ class CigarInventory:
         paned_window.add(right_frame, weight=1)
 
         # === LEFT FRAME: Resupply Orders List ===
-        resupply_columns = ('date', 'items', 'total_cost', 'total_shipping')
+        resupply_columns = ('date', 'items', 'total_cost', 'total_shipping', 'total_weight')
         resupply_tree = ttk.Treeview(left_frame, columns=resupply_columns, show='headings', height=15)
         
         resupply_tree.heading('date', text='Date & Time')
         resupply_tree.heading('items', text='Items')
         resupply_tree.heading('total_cost', text='Total Cost')
         resupply_tree.heading('total_shipping', text='Shipping')
+        resupply_tree.heading('total_weight', text='Weight')
         
         resupply_tree.column('date', width=150)
         resupply_tree.column('items', width=80)
         resupply_tree.column('total_cost', width=100)
         resupply_tree.column('total_shipping', width=100)
+        resupply_tree.column('total_weight', width=80)
 
         resupply_scrollbar = ttk.Scrollbar(left_frame, orient='vertical', command=resupply_tree.yview)
         resupply_tree.configure(yscrollcommand=resupply_scrollbar.set)
@@ -898,7 +966,7 @@ class CigarInventory:
         resupply_detail_tree.heading('size', text='Size')
         resupply_detail_tree.heading('type', text='Type')
         resupply_detail_tree.heading('quantity', text='Qty')
-        resupply_detail_tree.heading('price', text='Price')
+        resupply_detail_tree.heading('price', text='Purchase Price')
         resupply_detail_tree.heading('shipping', text='Ship+Tax')
         resupply_detail_tree.heading('total_cost', text='Total')
         
@@ -1296,6 +1364,9 @@ class CigarInventory:
             type_name = self.resupply_type_var.get().strip()
             count = int(self.resupply_count_var.get())
             price = float(self.resupply_price_var.get())
+            weight = float(self.resupply_weight_var.get() or 0)
+            sale_price = float(self.resupply_sale_price_var.get() or 0)
+            instate_wholesaler = self.resupply_instate_var.get()
             
             if not cigar_name or count <= 0 or price < 0:
                 messagebox.showwarning("Warning", "Please enter valid cigar details.")
@@ -1317,6 +1388,9 @@ class CigarInventory:
                 'type': type_name,
                 'count': count,
                 'price': price,
+                'weight_per_stick': weight,
+                'sale_price': sale_price,  # Sale price for business humidors
+                'instate_wholesaler': instate_wholesaler,  # Track if from in-state wholesaler
                 'proportional_shipping': 0,
                 'proportional_tax': 0,
                 'price_per_stick': 0
@@ -1331,6 +1405,9 @@ class CigarInventory:
             self.resupply_type_var.set('')
             self.resupply_count_var.set('')
             self.resupply_price_var.set('')
+            self.resupply_weight_var.set('')
+            self.resupply_sale_price_var.set('')
+            self.resupply_instate_var.set(False)
             
             # Recalculate and refresh
             self.calculate_resupply_costs()
@@ -1358,12 +1435,16 @@ class CigarInventory:
                 for cigar in self.current_resupply_order:
                     cigar['proportional_shipping'] = 0
                     cigar['proportional_tax'] = 0
+                    cigar['proportional_luxury_tax'] = 0
                     cigar['price_per_stick'] = 0
                 self.resupply_total_tax_label.config(text="$0.00")
+                self.resupply_summary_luxury_tax_label.config(text="Total Luxury Tax (if out-of-state): $0.00")
                 self.refresh_resupply_cigars_display()
+                self.update_resupply_summary()
                 return
             
             total_tax_amount = 0
+            total_luxury_tax = 0
             shipping_per_cigar = total_shipping / total_cigars
             
             # Update each cigar with proportional costs
@@ -1374,19 +1455,41 @@ class CigarInventory:
                 # Calculate proportional shipping
                 cigar['proportional_shipping'] = shipping_per_cigar * cigar_count
                 
-                # Calculate tax
+                # Calculate tax (only if NOT from in-state wholesaler)
                 base_price_per_stick = base_price / cigar_count if cigar_count > 0 else 0
-                tax_per_stick = base_price_per_stick * tax_rate
-                cigar['proportional_tax'] = tax_per_stick * cigar_count
+                if not cigar.get('instate_wholesaler', False):
+                    tax_per_stick = base_price_per_stick * tax_rate
+                    cigar['proportional_tax'] = tax_per_stick * cigar_count
+                    total_tax_amount += cigar['proportional_tax']
+                else:
+                    cigar['proportional_tax'] = 0  # No tax for in-state wholesaler
                 
-                total_tax_amount += cigar['proportional_tax']
+                # Calculate luxury tax (only for out-of-state cigars, assuming business humidor)
+                if not cigar.get('instate_wholesaler', False):
+                    # Use the calculated price per stick for luxury tax calculation
+                    price_per_stick = cigar['price_per_stick'] if cigar['price_per_stick'] > 0 else base_price_per_stick
+                    if price_per_stick > 1.0:
+                        luxury_tax_per_stick = min(price_per_stick * self.luxury_tax_rate, self.luxury_tax_cap)
+                        cigar['proportional_luxury_tax'] = luxury_tax_per_stick * cigar_count
+                        total_luxury_tax += cigar['proportional_luxury_tax']
+                    else:
+                        cigar['proportional_luxury_tax'] = 0
+                else:
+                    cigar['proportional_luxury_tax'] = 0  # No luxury tax for in-state wholesaler
                 
-                # Calculate price per stick
-                total_cost = base_price + cigar['proportional_tax'] + cigar['proportional_shipping']
+                # Calculate price per stick (include luxury tax for out-of-state cigars)
+                if not cigar.get('instate_wholesaler', False):
+                    # For out-of-state cigars, include luxury tax in cost basis
+                    total_cost = base_price + cigar['proportional_tax'] + cigar['proportional_shipping'] + cigar['proportional_luxury_tax']
+                else:
+                    # For in-state wholesaler cigars, no luxury tax
+                    total_cost = base_price + cigar['proportional_tax'] + cigar['proportional_shipping']
+                
                 cigar['price_per_stick'] = total_cost / cigar_count if cigar_count > 0 else 0
             
             # Update displays
             self.resupply_total_tax_label.config(text=f"${total_tax_amount:.2f}")
+            self.resupply_summary_luxury_tax_label.config(text=f"Total Luxury Tax (if out-of-state): ${total_luxury_tax:.2f}")
             self.refresh_resupply_cigars_display()
             self.update_resupply_summary()
             
@@ -1394,9 +1497,12 @@ class CigarInventory:
             for cigar in self.current_resupply_order:
                 cigar['proportional_shipping'] = 0
                 cigar['proportional_tax'] = 0
+                cigar['proportional_luxury_tax'] = 0
                 cigar['price_per_stick'] = 0
             self.resupply_total_tax_label.config(text="$0.00")
+            self.resupply_summary_luxury_tax_label.config(text="Total Luxury Tax (if out-of-state): $0.00")
             self.refresh_resupply_cigars_display()
+            self.update_resupply_summary()
 
     def refresh_resupply_cigars_display(self):
         """Refresh the resupply cigars treeview display."""
@@ -1412,10 +1518,14 @@ class CigarInventory:
                 cigar.get('size', ''),
                 cigar.get('type', ''),
                 str(cigar.get('count', 0)),
+                self.format_weight_display(cigar.get('weight_per_stick', 0)),
                 f"${cigar.get('price', 0):.2f}",
                 f"${cigar.get('proportional_shipping', 0):.2f}",
                 f"${cigar.get('proportional_tax', 0):.2f}",
-                f"${cigar.get('price_per_stick', 0):.2f}"
+                f"${cigar.get('proportional_luxury_tax', 0):.2f}",
+                f"${cigar.get('price_per_stick', 0):.2f}",
+                f"${cigar.get('sale_price', 0):.2f}",
+                "Yes" if cigar.get('instate_wholesaler', False) else "No"
             )
             self.resupply_cigars_tree.insert('', 'end', values=values)
 
@@ -1424,10 +1534,12 @@ class CigarInventory:
         total_items = sum(cigar.get('count', 0) for cigar in self.current_resupply_order)
         total_allocated_shipping = sum(cigar.get('proportional_shipping', 0) for cigar in self.current_resupply_order)
         total_calculated_tax = sum(cigar.get('proportional_tax', 0) for cigar in self.current_resupply_order)
+        total_luxury_tax = sum(cigar.get('proportional_luxury_tax', 0) for cigar in self.current_resupply_order)
         
         self.resupply_summary_items_label.config(text=f"Total Items: {total_items}")
         self.resupply_summary_shipping_label.config(text=f"Total Shipping Allocated: ${total_allocated_shipping:.2f}")
         self.resupply_summary_tax_label.config(text=f"Total Tax Calculated: ${total_calculated_tax:.2f}")
+        self.resupply_summary_luxury_tax_label.config(text=f"Total Luxury Tax (if out-of-state): ${total_luxury_tax:.2f}")
 
     def update_resupply_cigar_dropdown(self, *args):
         """Update cigar dropdown based on selected brand."""
@@ -1540,7 +1652,12 @@ class CigarInventory:
         ttk.Label(main_frame, text="Price ($):").pack(anchor='w', pady=(0, 5))
         price_var = tk.StringVar(value=str(cigar_data['price']))
         price_entry = ttk.Entry(main_frame, textvariable=price_var, width=30)
-        price_entry.pack(fill='x', pady=(0, 15))
+        price_entry.pack(fill='x', pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Weight per Stick (oz):").pack(anchor='w', pady=(0, 5))
+        weight_var = tk.StringVar(value=str(cigar_data.get('weight_per_stick', 0)))
+        weight_entry = ttk.Entry(main_frame, textvariable=weight_var, width=30)
+        weight_entry.pack(fill='x', pady=(0, 15))
         
         # Buttons frame
         button_frame = ttk.Frame(main_frame)
@@ -1551,6 +1668,7 @@ class CigarInventory:
                 # Validate inputs
                 new_count = int(count_var.get())
                 new_price = float(price_var.get())
+                new_weight = float(weight_var.get() or 0)
                 
                 if new_count <= 0 or new_price < 0:
                     messagebox.showerror("Error", "Please enter valid numeric values.")
@@ -1563,6 +1681,7 @@ class CigarInventory:
                 cigar_data['type'] = type_var.get().strip()
                 cigar_data['count'] = new_count
                 cigar_data['price'] = new_price
+                cigar_data['weight_per_stick'] = new_weight
                 
                 # Add to brands/sizes/types if new
                 if cigar_data['brand'] and cigar_data['brand'] not in self.brands:
@@ -1632,7 +1751,9 @@ class CigarInventory:
                         existing_cigar, 
                         cigar_data['count'], 
                         cigar_data['price'], 
-                        equiv_shipping
+                        equiv_shipping,
+                        cigar_data.get('weight_per_stick', 0.0),
+                        cigar_data.get('sale_price', 0.0)
                     )
                     
                     new_count = existing_cigar.get('count', 0)
@@ -1657,6 +1778,8 @@ class CigarInventory:
                         'type': cigar_data['type'],
                         'count': cigar_data['count'],
                         'price': cigar_data['price'],
+                        'weight_per_stick': cigar_data.get('weight_per_stick', 0.0),
+                        'sale_price': cigar_data.get('sale_price', 0.0),
                         'shipping': equiv_shipping,
                         'price_per_stick': cigar_data['price_per_stick'],
                         'personal_rating': None,
@@ -1695,6 +1818,115 @@ class CigarInventory:
         except Exception as e:
             messagebox.showerror("Error", f"Error processing order: {str(e)}")
         
+    def show_humidor_settings(self):
+        """Show humidor settings dialog."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Humidor Settings")
+        dialog.geometry("400x350")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (200)
+        y = (dialog.winfo_screenheight() // 2) - (175)
+        dialog.geometry(f"400x350+{x}+{y}")
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill='both', expand=True)
+        
+        # Header
+        ttk.Label(main_frame, text="Humidor Settings", 
+                 font=('TkDefaultFont', 12, 'bold')).pack(pady=(0, 20))
+        
+        # Humidor type
+        type_frame = ttk.LabelFrame(main_frame, text="Humidor Type", padding="10")
+        type_frame.pack(fill='x', pady=(0, 15))
+        
+        humidor_type_var = tk.StringVar(value=self.humidor_type)
+        ttk.Radiobutton(type_frame, text="Personal Use", variable=humidor_type_var, 
+                       value="personal").pack(anchor='w', pady=2)
+        ttk.Radiobutton(type_frame, text="Business Use", variable=humidor_type_var, 
+                       value="business").pack(anchor='w', pady=2)
+        
+        # Tax settings
+        tax_frame = ttk.LabelFrame(main_frame, text="Tax Settings", padding="10")
+        tax_frame.pack(fill='x', pady=(0, 15))
+        
+        # Regular tax rate
+        ttk.Label(tax_frame, text="Regular Tax Rate (%):").grid(row=0, column=0, sticky='w', padx=(0, 10), pady=5)
+        tax_rate_var = tk.StringVar(value=str(self.tax_rate * 100))
+        tax_rate_entry = ttk.Entry(tax_frame, textvariable=tax_rate_var, width=10)
+        tax_rate_entry.grid(row=0, column=1, sticky='w', pady=5)
+        
+        # Luxury tax settings
+        ttk.Label(tax_frame, text="Luxury Tax Rate (%):").grid(row=1, column=0, sticky='w', padx=(0, 10), pady=5)
+        luxury_tax_var = tk.StringVar(value=str(self.luxury_tax_rate * 100))
+        luxury_tax_entry = ttk.Entry(tax_frame, textvariable=luxury_tax_var, width=10)
+        luxury_tax_entry.grid(row=1, column=1, sticky='w', pady=5)
+        
+        ttk.Label(tax_frame, text="Luxury Tax Cap ($):").grid(row=2, column=0, sticky='w', padx=(0, 10), pady=5)
+        luxury_cap_var = tk.StringVar(value=str(self.luxury_tax_cap))
+        luxury_cap_entry = ttk.Entry(tax_frame, textvariable=luxury_cap_var, width=10)
+        luxury_cap_entry.grid(row=2, column=1, sticky='w', pady=5)
+        
+        # Department of Revenue tax
+        ttk.Label(tax_frame, text="DOR Tax Rate (%):").grid(row=3, column=0, sticky='w', padx=(0, 10), pady=5)
+        dor_tax_var = tk.StringVar(value=str(self.dor_tax_rate * 100))
+        dor_tax_entry = ttk.Entry(tax_frame, textvariable=dor_tax_var, width=10)
+        dor_tax_entry.grid(row=3, column=1, sticky='w', pady=5)
+        
+        # Distributor tax
+        ttk.Label(tax_frame, text="Distributor Tax Rate (%):").grid(row=4, column=0, sticky='w', padx=(0, 10), pady=5)
+        distributor_tax_var = tk.StringVar(value=str(self.distributor_tax_rate * 100))
+        distributor_tax_entry = ttk.Entry(tax_frame, textvariable=distributor_tax_var, width=10)
+        distributor_tax_entry.grid(row=4, column=1, sticky='w', pady=5)
+        
+        # Weight limit info
+        weight_frame = ttk.LabelFrame(main_frame, text="Weight Limit", padding="10")
+        weight_frame.pack(fill='x', pady=(0, 15))
+        
+        ttk.Label(weight_frame, text="Business humidors are limited to 500 lbs (8000 oz) for retail sales.", 
+                 wraplength=350).pack(anchor='w')
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill='x', pady=(10, 0))
+        
+        def save_settings():
+            try:
+                # Update humidor type
+                self.humidor_type = humidor_type_var.get()
+                
+                # Update tax rates
+                self.tax_rate = float(tax_rate_var.get()) / 100
+                self.luxury_tax_rate = float(luxury_tax_var.get()) / 100
+                self.luxury_tax_cap = float(luxury_cap_var.get())
+                self.dor_tax_rate = float(dor_tax_var.get()) / 100
+                self.distributor_tax_rate = float(distributor_tax_var.get()) / 100
+                
+                # Save settings
+                self.save_humidor_settings()
+                
+                # Refresh displays
+                self.refresh_inventory()
+                self.update_inventory_totals()
+                
+                dialog.destroy()
+                messagebox.showinfo("Success", "Humidor settings saved successfully!")
+                
+            except ValueError:
+                messagebox.showerror("Error", "Please enter valid numeric values for tax rates.")
+        
+        def cancel_settings():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Save", command=save_settings, 
+                  width=15).pack(side='left', padx=(0, 10))
+        ttk.Button(button_frame, text="Cancel", command=cancel_settings, 
+                  width=15).pack(side='right')
+
     def show_about(self):
         """Show about dialog."""
         about_text = """Cigar Inventory Manager
@@ -1707,8 +1939,11 @@ Features:
 • Shipping cost calculator
 • Multiple humidor support
 • Data backup and export
+• Weight tracking with business limit monitoring
+• Personal vs Business humidor types
+• Luxury tax calculation
 
-Version: 2.0
+Version: 2.1
 """
         messagebox.showinfo("About", about_text)
 
@@ -1751,11 +1986,11 @@ Version: 2.0
         
         # Left frame (search and treeview)
         left_frame = ttk.Frame(paned_window)
-        paned_window.add(left_frame, weight=3)  # Give more weight to the inventory side
+        paned_window.add(left_frame, weight=2)  # Reduce from 3 to 2 to give more space to right side
         
         # Right frame (buttons and calculators)
         right_frame = ttk.Frame(paned_window)
-        paned_window.add(right_frame, weight=1)  # Give less weight to the button side
+        paned_window.add(right_frame, weight=1)  # Keep this at 1, but left side is now smaller
         
         # Search frame
         search_frame = ttk.Frame(left_frame)
@@ -1774,8 +2009,8 @@ Version: 2.0
         tree_frame.pack(expand=True, fill='both')
         
         # Treeview with modern styling
-        columns = ('select', 'brand', 'cigar', 'size', 'type', 'count', 'price', 'shipping', 
-                  'per_stick', 'personal_rating')
+        columns = ('select', 'brand', 'cigar', 'size', 'type', 'count', 'weight', 'price', 'shipping', 
+                  'per_stick', 'sale_price', 'personal_rating')
         self.tree = ttk.Treeview(tree_frame, columns=columns, show='headings', style='Modern.Treeview')
         
         # Add scrollbars
@@ -1792,6 +2027,9 @@ Version: 2.0
         def on_mousewheel(event):
             self.tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
         self.tree.bind('<MouseWheel>', on_mousewheel)
+        
+        # Add right-click context menu for delete function
+        self.tree.bind('<Button-3>', self.show_context_menu)
         
         # Add totals frame at the bottom of the left frame
         self.setup_totals_frame(tree_container)
@@ -1811,9 +2049,11 @@ Version: 2.0
             'size': 'Size',
             'type': 'Type',
             'count': 'Count',
-            'price': 'Price ($)',
+            'weight': 'Weight (oz)',
+            'price': 'Purchase Price ($)',
             'shipping': 'Shipping ($)',
             'per_stick': 'Price/Stick',
+            'sale_price': 'Sale Price ($)',
             'personal_rating': 'My Rating'
         }
         
@@ -1825,9 +2065,11 @@ Version: 2.0
             'size': 70,   # Reduced from 100
             'type': 100,  # Keep this the same
             'count': 50,  # Reduced from 70
+            'weight': 80,  # Weight column
             'price': 80,  # Reduced from 100
             'shipping': 80,  # Reduced from 100
             'per_stick': 80,  # Reduced from 100
+            'sale_price': 80,  # Sale price column
             'personal_rating': 70  # Reduced from 100
         }
         
@@ -1908,22 +2150,26 @@ Version: 2.0
 
         # === RIGHT FRAME: Transaction Details ===
         # Treeview for individual items in selected transaction
-        detail_columns = ('cigar', 'brand', 'size', 'quantity', 'price_per_stick', 'total_cost')
+        detail_columns = ('cigar', 'brand', 'size', 'weight', 'quantity', 'price_per_stick', 'luxury_tax', 'total_cost')
         self.detail_tree = ttk.Treeview(right_frame, columns=detail_columns, show='headings', height=10)
         
         # Configure detail columns
         self.detail_tree.heading('cigar', text='Cigar')
         self.detail_tree.heading('brand', text='Brand')
         self.detail_tree.heading('size', text='Size')
+        self.detail_tree.heading('weight', text='Weight')
         self.detail_tree.heading('quantity', text='Qty')
         self.detail_tree.heading('price_per_stick', text='Price/Stick')
+        self.detail_tree.heading('luxury_tax', text='Luxury Tax')
         self.detail_tree.heading('total_cost', text='Total')
         
         self.detail_tree.column('cigar', width=120)
         self.detail_tree.column('brand', width=100)
         self.detail_tree.column('size', width=70)
+        self.detail_tree.column('weight', width=70)
         self.detail_tree.column('quantity', width=50)
         self.detail_tree.column('price_per_stick', width=80)
+        self.detail_tree.column('luxury_tax', width=80)
         self.detail_tree.column('total_cost', width=80)
 
         # Add scrollbar for details
@@ -1972,7 +2218,7 @@ Version: 2.0
 
         # === LEFT FRAME: Resupply Orders List ===
         # Treeview for resupply orders (grouped by order_id)
-        resupply_columns = ('date', 'items', 'total_cost', 'total_shipping')
+        resupply_columns = ('date', 'items', 'total_cost', 'total_shipping', 'total_weight')
         self.resupply_tree = ttk.Treeview(left_frame, columns=resupply_columns, show='headings', height=15)
         
         # Configure resupply columns
@@ -1980,11 +2226,13 @@ Version: 2.0
         self.resupply_tree.heading('items', text='Items')
         self.resupply_tree.heading('total_cost', text='Total Cost')
         self.resupply_tree.heading('total_shipping', text='Shipping')
+        self.resupply_tree.heading('total_weight', text='Weight')
         
         self.resupply_tree.column('date', width=150)
         self.resupply_tree.column('items', width=80)
         self.resupply_tree.column('total_cost', width=100)
         self.resupply_tree.column('total_shipping', width=100)
+        self.resupply_tree.column('total_weight', width=80)
 
         # Add scrollbar for resupply orders
         resupply_scrollbar = ttk.Scrollbar(left_frame, orient='vertical', command=self.resupply_tree.yview)
@@ -1996,7 +2244,7 @@ Version: 2.0
 
         # === RIGHT FRAME: Order Details ===
         # Treeview for individual items in selected resupply order
-        detail_columns = ('brand', 'cigar', 'size', 'type', 'quantity', 'price', 'shipping', 'total_cost')
+        detail_columns = ('brand', 'cigar', 'size', 'type', 'quantity', 'weight', 'price', 'shipping', 'total_cost')
         self.resupply_detail_tree = ttk.Treeview(right_frame, columns=detail_columns, show='headings', height=15)
         
         # Configure detail columns
@@ -2005,11 +2253,13 @@ Version: 2.0
         self.resupply_detail_tree.heading('size', text='Size')
         self.resupply_detail_tree.heading('type', text='Type')
         self.resupply_detail_tree.heading('quantity', text='Qty')
-        self.resupply_detail_tree.heading('price', text='Price')
+        self.resupply_detail_tree.heading('weight', text='Weight')
+        self.resupply_detail_tree.heading('price', text='Purchase Price')
         self.resupply_detail_tree.heading('shipping', text='Ship+Tax')
         self.resupply_detail_tree.heading('total_cost', text='Total')
         
         self.resupply_detail_tree.column('brand', width=100)
+        self.resupply_detail_tree.column('weight', width=70)
         self.resupply_detail_tree.column('cigar', width=120)
         self.resupply_detail_tree.column('size', width=70)
         self.resupply_detail_tree.column('type', width=80)
@@ -2075,6 +2325,7 @@ Version: 2.0
                     size,
                     cigar_type,
                     str(quantity),
+                    self.format_weight_display(resupply.get('weight_per_stick', 0)),
                     f"${price:.2f}",
                     f"${shipping_tax:.2f}",
                     f"${total_cost:.2f}"
@@ -2117,6 +2368,7 @@ Version: 2.0
                 total_items = sum(int(resupply.get('quantity', 1)) for resupply in resupplies)
                 total_cost = sum(float(resupply.get('total_cost', 0)) for resupply in resupplies)
                 total_shipping = sum(float(resupply.get('shipping_tax', 0)) for resupply in resupplies)
+                total_weight = sum(float(resupply.get('weight_per_stick', 0)) * int(resupply.get('quantity', 1)) for resupply in resupplies)
                 date = resupplies[0].get('date', 'Unknown')
                 
                 # Use the date from the first resupply in the order
@@ -2127,7 +2379,8 @@ Version: 2.0
                     date,
                     str(total_items),
                     f"${total_cost:.2f}",
-                    f"${total_shipping:.2f}"
+                    f"${total_shipping:.2f}",
+                    self.format_weight_display(total_weight)
                 )
                 
                 # Insert the item and store the order_id in our mapping
@@ -2224,12 +2477,18 @@ Version: 2.0
         
         # Handle checkbox column click
         if column == '#1':  # First column (checkbox)
-            cigar_name = self.tree.item(item)['values'][2]  # Cigar name is now at index 2
-            self.checkbox_states[cigar_name] = not self.checkbox_states.get(cigar_name, False)
+            brand = self.tree.item(item)['values'][1]  # Brand is at index 1
+            cigar_name = self.tree.item(item)['values'][2]  # Cigar name is at index 2
+            size = self.tree.item(item)['values'][3]  # Size is at index 3
+            
+            # Create a unique key for this specific cigar (brand + cigar + size)
+            cigar_key = f"{brand}_{cigar_name}_{size}"
+            
+            self.checkbox_states[cigar_key] = not self.checkbox_states.get(cigar_key, False)
             
             # Update only the checkbox display for this specific row
             current_values = list(self.tree.item(item)['values'])
-            current_values[0] = '☒' if self.checkbox_states[cigar_name] else '☐'
+            current_values[0] = '☒' if self.checkbox_states[cigar_key] else '☐'
             self.tree.item(item, values=current_values)
             
             self.update_selected_cigars_display()  # Update the selected cigars display
@@ -2262,8 +2521,10 @@ Version: 2.0
                     self.show_rating_dropdown(item, col_name, x, y, w, h)
                 elif col_name == 'count':
                     self.show_spinbox(item, col_name, x, y, w, h)
-                elif col_name in ['price', 'shipping']:
+                elif col_name in ['price', 'shipping', 'sale_price']:
                     self.show_price_entry(item, col_name, x, y, w, h)
+                elif col_name == 'weight':
+                    self.show_weight_entry(item, col_name, x, y, w, h)
                 else:  # cigar name field
                     self.show_text_entry(item, col_name, x, y, w, h)
 
@@ -2521,11 +2782,17 @@ Version: 2.0
                 
                 # Get cigar name (index 2 because of checkbox)
                 cigar_name = item_values[2]
+                brand = item_values[1]  # Also get brand for more precise matching
                 
                 # Find the cigar in inventory and update it
                 for cigar in self.inventory:
-                    if cigar['cigar'] == cigar_name:
-                        cigar[column] = value
+                    if cigar['cigar'] == cigar_name and cigar['brand'] == brand:
+                        # Map column names to inventory field names
+                        if column == 'sale_price':
+                            cigar['sale_price'] = value
+                        else:
+                            cigar[column] = value
+                        
                         # Recalculate price per stick only when price or shipping is manually changed
                         if column in ['price', 'shipping'] and cigar['count'] > 0:
                             cigar['price_per_stick'] = self.calculate_price_per_stick(
@@ -2541,6 +2808,9 @@ Version: 2.0
                 # Update display and totals
                 self.tree.set(item, column, f"${value:.2f}")
                 self.update_inventory_totals()  # Update totals after price change
+                
+                # Refresh the inventory display to ensure consistency
+                self.refresh_inventory()
                 
             except ValueError:
                 # If invalid value, restore previous value
@@ -2619,8 +2889,145 @@ Version: 2.0
         
         frame.place(x=x, y=y, width=w, height=h)
 
-    def calculate_price_per_stick(self, price, shipping, count, original_quantity=None):
-        """Calculate price per stick including tax and shipping."""
+    def show_weight_entry(self, item, column, x, y, w, h):
+        current_value = self.tree.set(item, column)
+        
+        frame = ttk.Frame(self.tree)
+        entry = ttk.Entry(frame, justify='right')
+        entry.insert(0, current_value)
+        entry.pack(expand=True, fill='both')
+        entry.focus()
+        entry.select_range(0, tk.END)
+
+        def save_value(event=None):
+            try:
+                value = float(entry.get())
+                
+                # Get all values from the tree item
+                item_values = self.tree.item(item)['values']
+                if not item_values:
+                    return
+                
+                # Get cigar name (index 2 because of checkbox)
+                cigar_name = item_values[2]
+                brand = item_values[1]  # Also get brand for more precise matching
+                
+                # Find the cigar in inventory and update it
+                for cigar in self.inventory:
+                    if cigar['cigar'] == cigar_name and cigar['brand'] == brand:
+                        # Map column names to inventory field names
+                        if column == 'weight':
+                            cigar['weight_per_stick'] = value
+                        elif column == 'sale_price':
+                            cigar['sale_price'] = value
+                        else:
+                            cigar[column] = value
+                        break
+                
+                # Save changes
+                self.save_inventory()
+                
+                # Update display and totals
+                self.tree.set(item, column, f"{value:.2f}")
+                self.update_inventory_totals()  # Update totals after weight change
+                
+                # Refresh the inventory display to ensure consistency
+                self.refresh_inventory()
+                
+            except ValueError:
+                # If invalid value, restore previous value
+                self.tree.set(item, column, current_value)
+            finally:
+                frame.destroy()
+
+        entry.bind('<Return>', save_value)
+        entry.bind('<FocusOut>', save_value)
+        entry.bind('<Escape>', lambda e: frame.destroy())
+        
+        frame.place(x=x, y=y, width=w, height=h)
+
+    def show_context_menu(self, event):
+        """Show right-click context menu for inventory items."""
+        # Get the item under the cursor
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+            
+        # Select the item if it's not already selected
+        if item not in self.tree.selection():
+            self.tree.selection_set(item)
+        
+        # Create context menu
+        context_menu = tk.Menu(self.root, tearoff=0)
+        
+        # Get item details
+        values = self.tree.item(item)['values']
+        if values and len(values) >= 3:
+            cigar_name = values[2]  # Cigar name is at index 2
+            brand = values[1]        # Brand is at index 1
+            size = values[3]         # Size is at index 3
+            count = int(values[5])   # Count is at index 5
+            
+            # Add delete option (only if count is 0 or if user wants to force delete)
+            if count == 0:
+                context_menu.add_command(label="Delete (Sold Out)", 
+                                       command=lambda: self.delete_cigar_from_inventory(brand, cigar_name, size))
+            else:
+                context_menu.add_command(label=f"Delete ({count} remaining)", 
+                                       command=lambda: self.delete_cigar_from_inventory(brand, cigar_name, size))
+        
+        # Show the menu at cursor position
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+
+    def delete_cigar_from_inventory(self, brand, cigar_name, size):
+        """Delete a cigar from inventory."""
+        # Find the cigar in inventory
+        cigar_to_delete = None
+        for cigar in self.inventory:
+            if (cigar.get('brand', '') == brand and 
+                cigar.get('cigar', '') == cigar_name and 
+                cigar.get('size', '') == size):
+                cigar_to_delete = cigar
+                break
+        
+        if not cigar_to_delete:
+            messagebox.showwarning("Warning", "Cigar not found in inventory.")
+            return
+        
+        # Confirm deletion
+        count = cigar_to_delete.get('count', 0)
+        if count > 0:
+            confirm_msg = f"Are you sure you want to delete '{brand} - {cigar_name} ({size})'?\n\n"
+            confirm_msg += f"This cigar still has {count} items in stock.\n"
+            confirm_msg += "This action cannot be undone."
+        else:
+            confirm_msg = f"Are you sure you want to delete '{brand} - {cigar_name} ({size})'?\n\n"
+            confirm_msg += "This cigar is sold out.\n"
+            confirm_msg += "This action cannot be undone."
+        
+        if messagebox.askyesno("Confirm Delete", confirm_msg):
+            # Remove from checkbox states if present
+            if cigar_name in self.checkbox_states:
+                del self.checkbox_states[cigar_name]
+            
+            # Remove from inventory
+            self.inventory.remove(cigar_to_delete)
+            
+            # Save changes
+            self.save_inventory()
+            
+            # Refresh display
+            self.refresh_inventory()
+            self.update_inventory_totals()
+            self.update_selected_cigars_display()
+            
+            messagebox.showinfo("Success", f"Deleted '{brand} - {cigar_name} ({size})' from inventory.")
+
+    def calculate_price_per_stick(self, price, shipping, count, original_quantity=None, instate_wholesaler=False):
+        """Calculate price per stick including shipping and tax (if applicable)."""
         try:
             price = float(price)
             shipping = float(shipping)
@@ -2632,8 +3039,11 @@ Version: 2.0
             # Calculate base price per stick
             price_per_stick = price / count
             
-            # Add tax to the base price
-            price_with_tax = price_per_stick * (1 + self.tax_rate)
+            # Add tax to the base price ONLY if NOT from in-state wholesaler
+            if not instate_wholesaler:
+                price_with_tax = price_per_stick * (1 + self.tax_rate)
+            else:
+                price_with_tax = price_per_stick
             
             # If original_quantity is provided (new cigars), use it for shipping
             # Otherwise (existing cigars), use current count
@@ -2851,8 +3261,12 @@ Version: 2.0
                 # Format rating properly
                 personal_rating = str(cigar.get('personal_rating')) if cigar.get('personal_rating') is not None else "N/A"
                 
-                # Get checkbox state
-                is_selected = self.checkbox_states.get(cigar.get('cigar', ''), False)
+                # Get checkbox state using unique key (brand + cigar + size)
+                brand = cigar.get('brand', '')
+                cigar_name = cigar.get('cigar', '')
+                size = cigar.get('size', '')
+                cigar_key = f"{brand}_{cigar_name}_{size}"
+                is_selected = self.checkbox_states.get(cigar_key, False)
                 
                 # All inventory items now have original_quantity field
                 # Use original_quantity for shipping distribution to preserve cost basis
@@ -2870,9 +3284,11 @@ Version: 2.0
                     cigar.get('size', ''),
                     cigar.get('type', ''),
                     str(cigar.get('count', 0)),
+                    self.format_weight_display(cigar.get('weight_per_stick', 0)),
                     f"${cigar.get('price', 0):.2f}",
                     f"${cigar.get('shipping', 0):.2f}",
                     f"${price_per_stick:.2f}",
+                    f"${cigar.get('sale_price', 0):.2f}",
                     personal_rating
                 ]
                 
@@ -2883,8 +3299,7 @@ Version: 2.0
                     self.tree.selection_add(item_id)
                     self.tree.see(item_id)  # Make sure the item is visible
             
-            # Update totals
-            self.update_order_total()
+            # Update inventory totals only (don't update order total here)
             self.update_inventory_totals()
                 
         except Exception as e:
@@ -2951,6 +3366,14 @@ Version: 2.0
                         # Add original_quantity field for existing inventory to preserve cost basis
                         if 'original_quantity' not in cigar:
                             cigar['original_quantity'] = cigar.get('count', 0)
+                        
+                        # Add weight_per_stick field for existing inventory
+                        if 'weight_per_stick' not in cigar:
+                            cigar['weight_per_stick'] = 0.0
+                        
+                        # Add sale_price field for existing inventory
+                        if 'sale_price' not in cigar:
+                            cigar['sale_price'] = 0.0
             except FileNotFoundError:
                 self.inventory = []
         except Exception as e:
@@ -2982,8 +3405,8 @@ Version: 2.0
                 if file_path:
                     with open(file_path, 'w', newline='') as f:
                         writer = csv.DictWriter(f, fieldnames=[
-                            'brand', 'cigar', 'size', 'type', 'count', 'price', 'shipping', 'price_per_stick',
-                            'personal_rating'
+                            'brand', 'cigar', 'size', 'type', 'count', 'weight_per_stick', 'price', 'shipping', 'price_per_stick',
+                            'personal_rating', 'humidor_type', 'luxury_tax'
                         ])
                         writer.writeheader()
                         writer.writerows(self.inventory)
@@ -3027,8 +3450,10 @@ Version: 2.0
             'price': 0.0,
             'shipping': 0.0,
             'price_per_stick': 0.0,
+            'sale_price': 0.0,  # Sale price for business humidors
             'personal_rating': None,
-            'original_quantity': 0  # Store the original quantity for cost basis
+            'original_quantity': 0,  # Store the original quantity for cost basis
+            'weight_per_stick': 0.0  # Weight per individual cigar in ounces
         }
         
         # Calculate initial price per stick using count=1 to avoid division by zero
@@ -3100,7 +3525,7 @@ Version: 2.0
         cigars_frame.pack(fill='both', expand=True, pady=(0, 15))
         
         # Create treeview for cigars
-        columns = ('brand', 'cigar', 'size', 'type', 'count', 'price', 'calc_shipping', 'calc_tax', 'price_per_stick')
+        columns = ('brand', 'cigar', 'size', 'type', 'count', 'weight', 'price', 'calc_shipping', 'calc_tax', 'price_per_stick', 'sale_price')
         cigars_tree = ttk.Treeview(cigars_frame, columns=columns, show='headings', height=12)
         
         # Configure columns
@@ -3109,20 +3534,24 @@ Version: 2.0
         cigars_tree.heading('size', text='Size')
         cigars_tree.heading('type', text='Type')
         cigars_tree.heading('count', text='Count')
-        cigars_tree.heading('price', text='Price')
+        cigars_tree.heading('weight', text='Weight')
+        cigars_tree.heading('price', text='Purchase Price')
         cigars_tree.heading('calc_shipping', text='Shipping')
         cigars_tree.heading('calc_tax', text='Tax')
         cigars_tree.heading('price_per_stick', text='Price/Stick')
+        cigars_tree.heading('sale_price', text='Sale Price')
         
         cigars_tree.column('brand', width=100)
         cigars_tree.column('cigar', width=120)
         cigars_tree.column('size', width=70)
         cigars_tree.column('type', width=80)
         cigars_tree.column('count', width=60)
+        cigars_tree.column('weight', width=70)
         cigars_tree.column('price', width=80)
         cigars_tree.column('calc_shipping', width=80)
         cigars_tree.column('calc_tax', width=70)
         cigars_tree.column('price_per_stick', width=90)
+        cigars_tree.column('sale_price', width=80)
         
         # Add scrollbar
         cigars_scrollbar = ttk.Scrollbar(cigars_frame, orient='vertical', command=cigars_tree.yview)
@@ -3179,8 +3608,10 @@ Version: 2.0
                 show_resupply_dropdown(item, item_index, col_name, sorted(list(self.types)), x, y, w, h)
             elif col_name == 'count':
                 show_resupply_spinbox(item, item_index, col_name, x, y, w, h)
-            elif col_name == 'price':
+            elif col_name in ['price', 'sale_price']:
                 show_resupply_price_entry(item, item_index, col_name, x, y, w, h)
+            elif col_name == 'weight':
+                show_resupply_weight_entry(item, item_index, col_name, x, y, w, h)
         
         cigars_tree.bind('<Double-1>', on_cigar_double_click)
         
@@ -3389,6 +3820,41 @@ Version: 2.0
             
             frame.place(x=x, y=y, width=w, height=h)
         
+        def show_resupply_weight_entry(item, item_index, column, x, y, w, h):
+            # Destroy any existing popups
+            for widget in cigars_tree.winfo_children():
+                if isinstance(widget, ttk.Frame):
+                    widget.destroy()
+                    
+            frame = ttk.Frame(cigars_tree)
+            entry = ttk.Entry(frame, justify='right')
+            current_value = order_cigars[item_index].get(column, 0)
+            entry.insert(0, str(current_value))
+            entry.pack(expand=True, fill='both')
+            entry.focus()
+            entry.select_range(0, tk.END)
+
+            def save_value(event=None):
+                try:
+                    value = float(entry.get())
+                    order_cigars[item_index][column] = value
+                    # Recalculate and refresh
+                    calculate_proportional_costs()
+                    
+                except ValueError:
+                    # If invalid value, restore previous value
+                    entry.insert(0, str(current_value))
+                except Exception as e:
+                    print(f"Error saving value: {e}")
+                finally:
+                    frame.destroy()
+
+            entry.bind('<Return>', save_value)
+            entry.bind('<FocusOut>', save_value)
+            entry.bind('<Escape>', lambda e: frame.destroy())
+            
+            frame.place(x=x, y=y, width=w, height=h)
+        
         # Add cigar frame
         add_frame = ttk.Frame(cigars_frame)
         add_frame.pack(fill='x', pady=(10, 0))
@@ -3464,6 +3930,12 @@ Version: 2.0
         price_var = tk.StringVar()
         price_entry = ttk.Entry(input_frame, textvariable=price_var, width=20)
         price_entry.grid(row=row, column=1, padx=(0, 10), pady=(0, 2), sticky='ew')
+        row += 1
+        
+        ttk.Label(input_frame, text="Weight per Stick (oz):").grid(row=row, column=0, sticky='w', padx=(0, 5), pady=(0, 2))
+        weight_var = tk.StringVar()
+        weight_entry = ttk.Entry(input_frame, textvariable=weight_var, width=20)
+        weight_entry.grid(row=row, column=1, padx=(0, 10), pady=(0, 2), sticky='ew')
         
         # Configure column weights for proper stretching
         input_frame.grid_columnconfigure(1, weight=1)
@@ -3572,6 +4044,7 @@ Version: 2.0
                     cigar.get('size', ''),
                     cigar.get('type', ''),
                     str(cigar.get('count', 0)),
+                    self.format_weight_display(cigar.get('weight_per_stick', 0)),
                     f"${cigar.get('price', 0):.2f}",
                     f"${cigar.get('proportional_shipping', 0):.2f}",
                     f"${cigar.get('proportional_tax', 0):.2f}",
@@ -3588,6 +4061,7 @@ Version: 2.0
                 type_name = type_var.get().strip()
                 count = int(count_var.get())
                 price = float(price_var.get())
+                weight = float(weight_var.get() or 0)
                 
                 if not cigar_name or count <= 0 or price < 0:
                     messagebox.showwarning("Warning", "Please enter valid cigar details.")
@@ -3617,6 +4091,7 @@ Version: 2.0
                     'type': type_name,
                     'count': count,
                     'price': price,
+                    'weight_per_stick': weight,
                     'proportional_shipping': 0,
                     'proportional_tax': 0,
                     'price_per_stick': 0
@@ -3631,6 +4106,7 @@ Version: 2.0
                 type_var.set('')
                 count_var.set('')
                 price_var.set('')
+                weight_var.set('')
                 
                 # Recalculate and refresh
                 calculate_proportional_costs()
@@ -3714,6 +4190,7 @@ Version: 2.0
                         'type': cigar_data['type'],
                         'quantity': cigar_data['count'],
                         'price': cigar_data['price'],
+                        'weight_per_stick': cigar_data.get('weight_per_stick', 0.0),
                         'shipping_tax': cigar_data['proportional_shipping'] + cigar_data['proportional_tax'],
                         'total_cost': cigar_data['price_per_stick'] * cigar_data['count']
                     }
@@ -3735,7 +4212,9 @@ Version: 2.0
                             existing_cigar, 
                             cigar_data['count'], 
                             cigar_data['price'], 
-                            equiv_shipping
+                            equiv_shipping,
+                            cigar_data.get('weight_per_stick', 0.0),
+                            cigar_data.get('sale_price', 0.0)
                         )
                         
                         # Capture new values after combining
@@ -3764,6 +4243,8 @@ Version: 2.0
                             'type': cigar_data['type'],
                             'count': cigar_data['count'],
                             'price': cigar_data['price'],
+                            'weight_per_stick': cigar_data.get('weight_per_stick', 0.0),
+                            'sale_price': cigar_data.get('sale_price', 0.0),
                             'shipping': equiv_shipping,  # Store combined shipping+tax as shipping
                             'price_per_stick': price_per_stick,
                             'personal_rating': None
@@ -3875,7 +4356,9 @@ Version: 2.0
         
         if result == "combine":
             # Combine the cigars
-            self.combine_cigar_purchases(duplicate_cigar, current_count, current_price, current_shipping)
+            self.combine_cigar_purchases(duplicate_cigar, current_count, current_price, current_shipping, 
+                                        current_cigar.get('weight_per_stick', 0.0), 
+                                        current_cigar.get('sale_price', 0.0))
             
             # Remove the current cigar since it's been combined
             self.inventory.remove(current_cigar)
@@ -4002,12 +4485,14 @@ Version: 2.0
 
 
 
-    def combine_cigar_purchases(self, existing_cigar, new_count, new_price, new_shipping):
+    def combine_cigar_purchases(self, existing_cigar, new_count, new_price, new_shipping, new_weight=0.0, new_sale_price=0.0):
         """Combine new purchase with existing cigar using weighted averages."""
         # Get current values
         old_count = int(existing_cigar.get('count', 0))
         old_price = float(existing_cigar.get('price', 0))
         old_shipping = float(existing_cigar.get('shipping', 0))
+        old_weight = float(existing_cigar.get('weight_per_stick', 0))
+        old_sale_price = float(existing_cigar.get('sale_price', 0))
         
         # Calculate combined values following the existing calculation style
         if old_count > 0:
@@ -4028,6 +4513,24 @@ Version: 2.0
             existing_cigar['price'] = combined_price  # Total price for all cigars
             existing_cigar['shipping'] = combined_shipping  # Total shipping for all cigars
             existing_cigar['price_per_stick'] = combined_price_per_stick
+            
+            # Calculate combined weight (weighted average)
+            if old_count > 0 and new_count > 0:
+                combined_weight = ((old_weight * old_count) + (new_weight * new_count)) / combined_count
+            elif old_count > 0:
+                combined_weight = old_weight
+            else:
+                combined_weight = new_weight
+            existing_cigar['weight_per_stick'] = combined_weight
+            
+            # Calculate combined sale price (weighted average)
+            if old_count > 0 and new_count > 0:
+                combined_sale_price = ((old_sale_price * old_count) + (new_sale_price * new_count)) / combined_count
+            elif old_count > 0:
+                combined_sale_price = old_sale_price
+            else:
+                combined_sale_price = new_sale_price
+            existing_cigar['sale_price'] = combined_sale_price
             
             # Update original_quantity to reflect the total combined quantity for cost basis
             existing_cigar['original_quantity'] = combined_count
@@ -4050,6 +4553,8 @@ Version: 2.0
             existing_cigar['price'] = new_price
             existing_cigar['shipping'] = new_shipping
             existing_cigar['price_per_stick'] = self.calculate_price_per_stick(new_price, new_shipping, new_count)
+            existing_cigar['weight_per_stick'] = new_weight
+            existing_cigar['sale_price'] = new_sale_price
             existing_cigar['original_quantity'] = new_count  # Set original quantity for cost basis
 
     def sort_treeview(self, col):
@@ -4084,7 +4589,7 @@ Version: 2.0
                         key = float(str(item.get(col, '0')).replace('N/A', '-1'))
                     except ValueError:
                         key = -1
-                elif col in ['price', 'shipping']:
+                elif col in ['price', 'shipping', 'weight', 'sale_price']:
                     try:
                         key = float(str(item.get(col, '0')).replace('$', '').replace(',', ''))
                     except ValueError:
@@ -4112,6 +4617,7 @@ Version: 2.0
                     item.get('size', ''),
                     item.get('type', ''),
                     str(item.get('count', '0')),
+                    self.format_weight_display(float(item.get('weight_per_stick', '0'))),
                     f"${float(item.get('price', '0')):.2f}",
                     f"${float(item.get('shipping', '0')):.2f}",
                     f"${float(item.get('price_per_stick', '0')):.2f}",
@@ -4185,7 +4691,7 @@ Version: 2.0
         self.selected_cigars_frame.bind('<MouseWheel>', lambda e: pack_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         # Set fixed height for pack list
-        pack_canvas.configure(height=300)  # Increased height to accommodate totals
+        pack_canvas.configure(height=400)  # Increased height to accommodate totals and buttons
 
         # Dictionary to store quantity spinboxes
         self.quantity_spinboxes = {}
@@ -4205,36 +4711,120 @@ Version: 2.0
         self.order_count_label = ttk.Label(self.totals_frame, text="Cigar Count: 0")
         self.order_count_label.pack(fill='x', pady=2)
 
-        # Add Process Sale button
-        ttk.Button(self.totals_frame, text="Process Sale", command=self.sell_selected, width=20).pack(pady=5)
+        # Add personal use checkbox for business humidors
+        self.personal_use_var = tk.BooleanVar()
+        self.personal_use_frame = ttk.Frame(self.totals_frame)
+        self.personal_use_checkbox = ttk.Checkbutton(self.personal_use_frame, text="Personal Use (No Luxury Tax)", 
+                       variable=self.personal_use_var)
+        
+        # Only show if business humidor
+        self.update_personal_use_display()
+        
+        # Pack the frame
+        self.personal_use_frame.pack(fill='x', pady=2)
+        self.personal_use_checkbox.pack(side='left')
+        
+        # Add Process Sale button with better spacing
+        ttk.Button(self.totals_frame, text="Process Sale", command=self.sell_selected, width=20).pack(pady=10)
+    
+    def update_personal_use_display(self):
+        """Update the display of the personal use checkbox based on humidor type."""
+        if hasattr(self, 'personal_use_frame'):
+            if self.humidor_type == "business":
+                self.personal_use_frame.pack(fill='x', pady=2)
+            else:
+                self.personal_use_frame.pack_forget()
 
 
 
     def update_order_total(self):
-        total_price = 0
+        subtotal = 0
         total_cigars = 0
+        total_sales_tax = 0
+        total_luxury_tax = 0
         
         for cigar in self.inventory:
             cigar_name = cigar.get('cigar', '')
-            if self.checkbox_states.get(cigar_name, False):
+            brand = cigar.get('brand', '')
+            size = cigar.get('size', '')
+            cigar_key = f"{brand}_{cigar_name}_{size}"
+            
+            if self.checkbox_states.get(cigar_key, False):
                 try:
                     # Get quantity from spinbox
                     quantity = int(self.quantity_spinboxes[cigar_name].get())
-                    # Get price per stick
-                    price_per_stick = float(cigar.get('price_per_stick', 0))
                     
-                    # Calculate total for this cigar
-                    total_price += price_per_stick * quantity
+                    # Use sale price if available, otherwise use cost price
+                    sale_price_per_stick = float(cigar.get('sale_price', 0))
+                    if sale_price_per_stick > 0:
+                        price_per_stick = sale_price_per_stick
+                    else:
+                        price_per_stick = float(cigar.get('price_per_stick', 0))
+                    
+                    # Calculate subtotal for this cigar
+                    cigar_subtotal = price_per_stick * quantity
+                    subtotal += cigar_subtotal
                     total_cigars += quantity
+                    
+                    # Calculate sales tax
+                    cigar_sales_tax = cigar_subtotal * self.tax_rate
+                    total_sales_tax += cigar_sales_tax
+                    
+                    # Calculate luxury tax for business humidors (exempt for in-state wholesaler cigars)
+                    if self.humidor_type == "business":
+                        # Check if this cigar is from an in-state wholesaler
+                        instate_wholesaler = cigar.get('instate_wholesaler', False)
+                        
+                        # EXEMPT if from in-state wholesaler
+                        if not instate_wholesaler and price_per_stick > 1.0:
+                            luxury_tax_per_stick = min(price_per_stick * self.luxury_tax_rate, self.luxury_tax_cap)
+                            cigar_luxury_tax = luxury_tax_per_stick * quantity
+                            total_luxury_tax += cigar_luxury_tax
                     
                 except (ValueError, KeyError):
                     # If there's an error with the spinbox, assume quantity of 1
-                    total_price += float(cigar.get('price_per_stick', 0))
+                    sale_price_per_stick = float(cigar.get('sale_price', 0))
+                    if sale_price_per_stick > 0:
+                        price_per_stick = sale_price_per_stick
+                    else:
+                        price_per_stick = float(cigar.get('price_per_stick', 0))
+                    
+                    subtotal += price_per_stick
                     total_cigars += 1
+                    total_sales_tax += price_per_stick * self.tax_rate
+                    
+                    # Calculate luxury tax for business humidors (ALWAYS applies to business humidors)
+                    if self.humidor_type == "business":
+                        if price_per_stick > 1.0:
+                            luxury_tax_per_stick = min(price_per_stick * self.luxury_tax_rate, self.luxury_tax_cap)
+                            total_luxury_tax += luxury_tax_per_stick
+        
+        # Calculate total including all taxes
+        total_price = subtotal + total_sales_tax + total_luxury_tax
         
         # Update the labels
         self.order_total_label.config(text=f"Sale Total: ${total_price:.2f}")
         self.order_count_label.config(text=f"Cigar Count: {total_cigars}")
+        
+        # Add tax breakdown if there are taxes
+        if total_sales_tax > 0 or total_luxury_tax > 0:
+            tax_breakdown = f"Subtotal: ${subtotal:.2f}"
+            if total_sales_tax > 0:
+                tax_breakdown += f" | Sales Tax: ${total_sales_tax:.2f}"
+            if total_luxury_tax > 0:
+                tax_breakdown += f" | Luxury Tax: ${total_luxury_tax:.2f}"
+            
+            # Update or create tax breakdown label
+            if not hasattr(self, 'tax_breakdown_label'):
+                self.tax_breakdown_label = ttk.Label(self.totals_frame, text=tax_breakdown, 
+                                                   font=('TkDefaultFont', 8), foreground='gray')
+                self.tax_breakdown_label.pack(fill='x', pady=2)
+            else:
+                self.tax_breakdown_label.config(text=tax_breakdown)
+        else:
+            # Hide tax breakdown if no taxes
+            if hasattr(self, 'tax_breakdown_label'):
+                self.tax_breakdown_label.pack_forget()
 
     def setup_totals_frame(self, parent_frame):
         """Setup frame for displaying inventory totals."""
@@ -4249,6 +4839,9 @@ Version: 2.0
         self.total_value_label = ttk.Label(totals_frame, text="Total Value: $0.00", anchor='center')
         self.total_value_label.pack(side='left', expand=True, padx=10)
 
+        self.total_weight_label = ttk.Label(totals_frame, text="Total Weight: 0.00 oz", anchor='center')
+        self.total_weight_label.pack(side='left', expand=True, padx=10)
+
         self.avg_shipping_label = ttk.Label(totals_frame, text="Avg Shipping: $0.00", anchor='center')
         self.avg_shipping_label.pack(side='left', expand=True, padx=10)
 
@@ -4259,6 +4852,7 @@ Version: 2.0
         """Update the inventory totals display."""
         total_count = 0
         total_value = 0.0
+        total_weight = 0.0
         total_items = 0  # Count all items, not just those with stock
 
         for cigar in self.inventory:
@@ -4270,6 +4864,11 @@ Version: 2.0
                 # Calculate total value using price_per_stick × count
                 price_per_stick = float(cigar.get('price_per_stick', 0))
                 total_value += (price_per_stick * count)
+                
+                # Calculate total weight
+                weight_per_stick = float(cigar.get('weight_per_stick', 0))
+                total_weight += (weight_per_stick * count)
+                
                 total_items += 1
 
         # Calculate average shipping for items with stock
@@ -4278,11 +4877,33 @@ Version: 2.0
         # Calculate average price per stick
         avg_price_stick = total_value / total_count if total_count > 0 else 0
 
+        # Format weight display (show pounds and ounces when over 16 oz)
+        weight_text = self.format_weight_display(total_weight)
+        
         # Update labels with formatted values
         self.total_count_label.config(text=f"Total Count: {total_count}")
         self.total_value_label.config(text=f"Total Value: ${total_value:.2f}")
+        self.total_weight_label.config(text=f"Total Weight: {weight_text}")
         self.avg_shipping_label.config(text=f"Avg Shipping: ${avg_shipping:.2f}")
         self.avg_price_stick_label.config(text=f"Avg Price/Stick: ${avg_price_stick:.2f}")
+        
+        # Check weight limit for business humidors (500 lbs = 8000 oz)
+        if self.humidor_type == "business" and total_weight > 8000:
+            self.total_weight_label.config(foreground='red')
+        else:
+            self.total_weight_label.config(foreground='black')
+
+    def format_weight_display(self, weight_oz):
+        """Format weight display to show pounds and ounces when over 16 oz."""
+        if weight_oz < 16:
+            return f"{weight_oz:.2f} oz"
+        else:
+            pounds = int(weight_oz // 16)
+            ounces = weight_oz % 16
+            if ounces == 0:
+                return f"{pounds} lb"
+            else:
+                return f"{pounds} lb {ounces:.2f} oz"
 
     def update_selected_cigars_display(self):
         """Update the display of selected cigars and their quantity controls."""
@@ -4305,20 +4926,26 @@ Version: 2.0
         # Add selected cigars with quantity controls
         for cigar in self.inventory:
             cigar_name = cigar.get('cigar', '')
-            if self.checkbox_states.get(cigar_name, False):
+            brand = cigar.get('brand', '')
+            size = cigar.get('size', '')
+            
+            # Create a unique key for this specific cigar (brand + cigar + size)
+            cigar_key = f"{brand}_{cigar_name}_{size}"
+            
+            if self.checkbox_states.get(cigar_key, False):
                 # Create frame for this cigar
                 cigar_frame = ttk.Frame(self.selected_cigars_frame)
                 cigar_frame.pack(fill='x', pady=2)
 
-                # Add cigar name label
-                name_label = ttk.Label(cigar_frame, text=f"{cigar.get('brand', '')} - {cigar_name}")
+                # Add cigar name label with size for clarity
+                name_label = ttk.Label(cigar_frame, text=f"{brand} - {cigar_name} ({size})")
                 name_label.pack(side='left', padx=5)
 
                 # Add quantity spinbox
                 # Use stored quantity if it exists, otherwise default to 1
-                initial_quantity = current_quantities.get(cigar_name, "1")
+                initial_quantity = current_quantities.get(cigar_key, "1")
                 
-                def make_spinbox_update(cigar_name):
+                def make_spinbox_update(cigar_key):
                     def update_wrapper(*args):
                         self.update_order_total()
                     return update_wrapper
@@ -4328,16 +4955,16 @@ Version: 2.0
                     from_=1,
                     to=cigar.get('count', 99),
                     width=5,
-                    command=make_spinbox_update(cigar_name)
+                    command=make_spinbox_update(cigar_key)
                 )
                 spinbox.set(initial_quantity)
                 spinbox.pack(side='right', padx=5)
                 
                 # Bind the spinbox to update totals when value is changed manually
-                spinbox.bind('<KeyRelease>', make_spinbox_update(cigar_name))
+                spinbox.bind('<KeyRelease>', make_spinbox_update(cigar_key))
                 
-                # Store the spinbox reference
-                self.quantity_spinboxes[cigar_name] = spinbox
+                # Store the spinbox reference using the unique key
+                self.quantity_spinboxes[cigar_key] = spinbox
 
                 # Add quantity label
                 ttk.Label(cigar_frame, text="Qty:").pack(side='right', padx=2)
@@ -4377,18 +5004,24 @@ Version: 2.0
         main_frame.pack(fill='both', expand=True)
 
         # Sale details in a treeview
-        columns = ('cigar', 'quantity', 'price', 'total')
+        columns = ('cigar', 'quantity', 'weight', 'price', 'sales_tax', 'luxury_tax', 'total')
         tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=10)
         
         # Configure columns
         tree.heading('cigar', text='Cigar')
         tree.heading('quantity', text='Qty')
+        tree.heading('weight', text='Weight')
         tree.heading('price', text='Price/Stick')
+        tree.heading('sales_tax', text='Sales Tax')
+        tree.heading('luxury_tax', text='Luxury Tax')
         tree.heading('total', text='Total')
         
         tree.column('cigar', width=150)
         tree.column('quantity', width=50)
+        tree.column('weight', width=70)
         tree.column('price', width=80)
+        tree.column('sales_tax', width=80)
+        tree.column('luxury_tax', width=80)
         tree.column('total', width=80)
 
         # Add scrollbar
@@ -4406,13 +5039,18 @@ Version: 2.0
         for record in sale_records:
             price_per_stick = float(record['price_per_stick'])
             quantity = int(record['quantity'])
-            total = price_per_stick * quantity
+            sales_tax = float(record.get('sales_tax', 0))
+            luxury_tax = float(record.get('luxury_tax', 0))
+            total = price_per_stick * quantity + sales_tax + luxury_tax
             grand_total += total
             
             values = (
                 f"{record['brand']} - {record['cigar']}",
                 str(quantity),
+                self.format_weight_display(record.get('weight_per_stick', 0)),
                 f"${price_per_stick:.2f}",
+                f"${record.get('sales_tax', 0):.2f}",
+                f"${record.get('luxury_tax', 0):.2f}",
                 f"${total:.2f}"
             )
             tree.insert('', 'end', values=values)
@@ -4472,7 +5110,11 @@ Version: 2.0
         # Process each selected cigar
         for cigar in self.inventory:
             cigar_name = cigar.get('cigar', '')
-            if self.checkbox_states.get(cigar_name, False):
+            brand = cigar.get('brand', '')
+            size = cigar.get('size', '')
+            cigar_key = f"{brand}_{cigar_name}_{size}"
+            
+            if self.checkbox_states.get(cigar_key, False):
                 try:
                     quantity = int(self.quantity_spinboxes[cigar_name].get())
                     if quantity < 1:
@@ -4484,9 +5126,37 @@ Version: 2.0
 
                 current_count = int(cigar.get('count', 0))
                 if current_count >= quantity:  # Check if we have enough stock
-                    # Calculate total cost for this sale
-                    price_per_stick = float(cigar.get('price_per_stick', 0))
-                    total_cost = price_per_stick * quantity
+                    # Use sale price if available, otherwise use cost price
+                    sale_price_per_stick = float(cigar.get('sale_price', 0))
+                    if sale_price_per_stick > 0:
+                        price_per_stick = sale_price_per_stick
+                    else:
+                        price_per_stick = float(cigar.get('price_per_stick', 0))
+                    
+                    # Check if personal use is selected
+                    personal_use = getattr(self, 'personal_use_var', tk.BooleanVar()).get()
+                    
+                    # Calculate luxury tax for business humidors (exempt for in-state wholesaler cigars)
+                    luxury_tax = 0.0
+                    if self.humidor_type == "business":
+                        # Check if this cigar is from an in-state wholesaler
+                        instate_wholesaler = cigar.get('instate_wholesaler', False)
+                        
+                        # Luxury tax is 28.5% up to 28.5 cents per cigar over $1
+                        # Use sale price for luxury tax calculation if available
+                        # EXEMPT if from in-state wholesaler
+                        if not instate_wholesaler:
+                            base_price = price_per_stick
+                            if base_price > 1.0:
+                                luxury_tax_per_stick = min(base_price * self.luxury_tax_rate, self.luxury_tax_cap)
+                                luxury_tax = luxury_tax_per_stick * quantity
+                    
+                    # Calculate sales tax (regular tax rate) - always applies unless personal use
+                    sales_tax = 0.0
+                    if not personal_use:
+                        sales_tax = price_per_stick * quantity * self.tax_rate
+                    
+                    total_cost = price_per_stick * quantity + luxury_tax + sales_tax
 
                     # Create sale record
                     sale_record = {
@@ -4495,7 +5165,11 @@ Version: 2.0
                         'brand': cigar.get('brand', ''),
                         'cigar': cigar_name,
                         'size': cigar.get('size', ''),
+                        'weight_per_stick': cigar.get('weight_per_stick', 0.0),
                         'price_per_stick': price_per_stick,
+                        'luxury_tax': luxury_tax,
+                        'sales_tax': sales_tax,
+                        'personal_use': personal_use,
                         'quantity': quantity,
                         'total_cost': total_cost
                     }
@@ -4535,7 +5209,7 @@ Version: 2.0
         history_window.geometry("800x600")
         
         # Create treeview for sales history
-        columns = ('date', 'brand', 'cigar', 'size', 'price_per_stick')
+        columns = ('date', 'brand', 'cigar', 'size', 'weight', 'price_per_stick', 'sales_tax', 'luxury_tax', 'personal_use')
         tree = ttk.Treeview(history_window, columns=columns, show='headings')
         
         # Configure columns
@@ -4544,7 +5218,11 @@ Version: 2.0
             'brand': 'Brand',
             'cigar': 'Cigar',
             'size': 'Size',
-            'price_per_stick': 'Price/Stick'
+            'weight': 'Weight',
+            'price_per_stick': 'Price/Stick',
+            'sales_tax': 'Sales Tax',
+            'luxury_tax': 'Luxury Tax',
+            'personal_use': 'Personal Use'
         }
         
         for col, heading in headings.items():
@@ -4568,7 +5246,11 @@ Version: 2.0
                     sale['brand'],
                     sale['cigar'],
                     sale['size'],
-                    f"${sale['price_per_stick']:.2f}"
+                    self.format_weight_display(sale.get('weight_per_stick', 0)),
+                    f"${sale['price_per_stick']:.2f}",
+                    f"${sale.get('sales_tax', 0):.2f}",
+                    f"${sale.get('luxury_tax', 0):.2f}",
+                    "Yes" if sale.get('personal_use', False) else "No"
                 )
                 tree.insert('', 'end', values=values)
         except Exception as e:
@@ -4632,6 +5314,11 @@ Version: 2.0
         try:
             settings = {
                 'tax_rate': self.tax_rate,
+                'luxury_tax_rate': self.luxury_tax_rate,
+                'luxury_tax_cap': self.luxury_tax_cap,
+                'humidor_type': self.humidor_type,
+                'dor_tax_rate': self.dor_tax_rate,
+                'distributor_tax_rate': self.distributor_tax_rate,
                 'humidor_name': self.humidor_name
             }
             with open(self.get_data_file_path('humidor_settings.json'), 'w') as f:
@@ -4645,6 +5332,11 @@ Version: 2.0
             with open(self.get_data_file_path('humidor_settings.json'), 'r') as f:
                 settings = json.load(f)
                 self.tax_rate = settings.get('tax_rate', 0.086)  # Default to 8.6%
+                self.luxury_tax_rate = settings.get('luxury_tax_rate', 0.285)  # Default to 28.5%
+                self.luxury_tax_cap = settings.get('luxury_tax_cap', 0.285)  # Default to 28.5 cents
+                self.humidor_type = settings.get('humidor_type', "personal")  # Default to "personal"
+                self.dor_tax_rate = settings.get('dor_tax_rate', 0.0)  # Default to 0%
+                self.distributor_tax_rate = settings.get('distributor_tax_rate', 0.0)  # Default to 0%
                 # Update humidor name if saved
                 saved_name = settings.get('humidor_name')
                 if saved_name:
@@ -4652,9 +5344,19 @@ Version: 2.0
         except FileNotFoundError:
             # Use defaults if file doesn't exist
             self.tax_rate = 0.086  # Default 8.6%
+            self.luxury_tax_rate = 0.285  # Default 28.5%
+            self.luxury_tax_cap = 0.285  # Default 28.5 cents
+            self.humidor_type = "personal"  # Default "personal"
+            self.dor_tax_rate = 0.0  # Default 0%
+            self.distributor_tax_rate = 0.0  # Default 0%
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load humidor settings: {str(e)}")
             self.tax_rate = 0.086  # Default 8.6%
+            self.luxury_tax_rate = 0.285  # Default 28.5%
+            self.luxury_tax_cap = 0.285  # Default 28.5 cents
+            self.humidor_type = "personal"  # Default "personal"
+            self.dor_tax_rate = 0.0  # Default 0%
+            self.distributor_tax_rate = 0.0  # Default 0%
 
     def manual_save(self):
         """Manually save all data and show confirmation."""
@@ -4716,8 +5418,10 @@ Version: 2.0
                     cigar_name,
                     brand,
                     size,
+                    self.format_weight_display(sale.get('weight_per_stick', 0)),
                     str(quantity),
                     f"${price_per_stick:.2f}",
+                    f"${sale.get('luxury_tax', 0):.2f}",
                     f"${total_cost:.2f}"
                 )
                 self.detail_tree.insert('', 'end', values=values)
@@ -4930,14 +5634,18 @@ Version: 2.0
         tree_frame = ttk.Frame(content_frame)
         tree_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 15))
 
-        columns = ('item', 'quantity')
+        columns = ('item', 'quantity', 'weight', 'luxury_tax')
         tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=12)
         
         tree.heading('item', text='Item')
         tree.heading('quantity', text='Return Qty')
+        tree.heading('weight', text='Weight')
+        tree.heading('luxury_tax', text='Luxury Tax')
         
-        tree.column('item', width=400)  # Made wider
+        tree.column('item', width=300)  # Made wider
         tree.column('quantity', width=100)
+        tree.column('weight', width=100)
+        tree.column('luxury_tax', width=100)
 
         # Add scrollbar for tree
         scrollbar = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
@@ -4950,7 +5658,20 @@ Version: 2.0
         # Populate the tree with return items
         total_items = 0
         for cigar_name, brand, return_qty, _ in return_list:
-            values = (f"{brand} - {cigar_name}", str(return_qty))
+            # Get weight and luxury tax from inventory
+            weight = 0.0
+            luxury_tax = 0.0
+            for cigar in self.inventory:
+                if cigar['cigar'] == cigar_name:
+                    weight = cigar.get('weight_per_stick', 0.0)
+                    # Calculate luxury tax for business humidors
+                    if self.humidor_type == "business":
+                        base_price = float(cigar.get('price', 0)) / int(cigar.get('count', 1))
+                        if base_price > 1.0:
+                            luxury_tax_per_stick = min(base_price * self.luxury_tax_rate, self.luxury_tax_cap)
+                            luxury_tax = luxury_tax_per_stick * return_qty
+                    break
+            values = (f"{brand} - {cigar_name}", str(return_qty), self.format_weight_display(weight), f"${luxury_tax:.2f}")
             tree.insert('', 'end', values=values)
             total_items += return_qty
 
