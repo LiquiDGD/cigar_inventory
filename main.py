@@ -416,6 +416,12 @@ class CigarInventory:
         self.resupply_cigars_tree.pack(side='left', fill='both', expand=True)
         resupply_cigars_scrollbar.pack(side='right', fill='y')
         
+        # Bind double-click to edit items
+        self.resupply_cigars_tree.bind('<Double-1>', lambda event: self.edit_resupply_item())
+        
+        # Bind Delete key to remove items
+        self.resupply_cigars_tree.bind('<Delete>', lambda event: self.remove_from_resupply_order())
+        
         # Initialize order storage
         self.current_resupply_order = []
         
@@ -468,6 +474,8 @@ class CigarInventory:
         management_frame = ttk.LabelFrame(right_frame, text="Order Management", padding="15")
         management_frame.pack(fill='x', pady=(0, 15))
         
+        ttk.Button(management_frame, text="Edit Selected", 
+                  command=self.edit_resupply_item, width=25).pack(pady=(0, 5))
         ttk.Button(management_frame, text="Remove Selected", 
                   command=self.remove_from_resupply_order, width=25).pack(pady=(0, 5))
         ttk.Button(management_frame, text="Clear Order", 
@@ -1450,14 +1458,137 @@ class CigarInventory:
         item_index = self.resupply_cigars_tree.index(selected_item)
         
         if 0 <= item_index < len(self.current_resupply_order):
-            self.current_resupply_order.pop(item_index)
-            self.calculate_resupply_costs()
+            # Get cigar details for confirmation message
+            cigar_data = self.current_resupply_order[item_index]
+            cigar_name = f"{cigar_data['brand']} - {cigar_data['cigar']}"
+            
+            # Confirm removal
+            if messagebox.askyesno("Confirm Removal", f"Are you sure you want to remove:\n\n{cigar_name}\n\nfrom the resupply order?"):
+                self.current_resupply_order.pop(item_index)
+                self.calculate_resupply_costs()
+                self.refresh_resupply_cigars_display()  # Refresh the display
+                messagebox.showinfo("Success", f"Removed {cigar_name} from the order.")
 
     def clear_resupply_order(self):
         """Clear the entire resupply order."""
         if self.current_resupply_order and messagebox.askyesno("Confirm", "Clear entire order?"):
             self.current_resupply_order.clear()
             self.calculate_resupply_costs()
+
+    def edit_resupply_item(self):
+        """Edit the selected item in the resupply order."""
+        selected = self.resupply_cigars_tree.selection()
+        if not selected:
+            messagebox.showwarning("Warning", "Please select an item to edit.")
+            return
+        
+        selected_item = selected[0]
+        item_index = self.resupply_cigars_tree.index(selected_item)
+        
+        if 0 <= item_index < len(self.current_resupply_order):
+            cigar_data = self.current_resupply_order[item_index]
+            self.show_edit_resupply_dialog(cigar_data, item_index)
+        else:
+            messagebox.showerror("Error", "Invalid item selection.")
+
+    def show_edit_resupply_dialog(self, cigar_data, item_index):
+        """Show dialog to edit resupply item."""
+        # Create edit dialog
+        edit_dialog = tk.Toplevel(self.root)
+        edit_dialog.title("Edit Resupply Item")
+        edit_dialog.geometry("400x350")
+        edit_dialog.transient(self.root)
+        edit_dialog.grab_set()
+        
+        # Center the dialog
+        edit_dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
+        
+        # Create main frame
+        main_frame = ttk.Frame(edit_dialog, padding="20")
+        main_frame.pack(fill='both', expand=True)
+        
+        # Input fields
+        ttk.Label(main_frame, text="Brand:").pack(anchor='w', pady=(0, 5))
+        brand_var = tk.StringVar(value=cigar_data['brand'])
+        brand_combo = ttk.Combobox(main_frame, textvariable=brand_var, 
+                                  values=sorted(list(self.brands)), width=30)
+        brand_combo.pack(fill='x', pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Cigar:").pack(anchor='w', pady=(0, 5))
+        cigar_var = tk.StringVar(value=cigar_data['cigar'])
+        cigar_combo = ttk.Combobox(main_frame, textvariable=cigar_var, 
+                                  values=sorted(list(set(cigar.get('cigar', '') for cigar in self.inventory if cigar.get('cigar', '')))), width=30)
+        cigar_combo.pack(fill='x', pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Size:").pack(anchor='w', pady=(0, 5))
+        size_var = tk.StringVar(value=cigar_data['size'])
+        size_combo = ttk.Combobox(main_frame, textvariable=size_var, 
+                                 values=sorted(list(self.sizes)), width=30)
+        size_combo.pack(fill='x', pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Type:").pack(anchor='w', pady=(0, 5))
+        type_var = tk.StringVar(value=cigar_data['type'])
+        type_combo = ttk.Combobox(main_frame, textvariable=type_var, 
+                                 values=sorted(list(self.types)), width=30)
+        type_combo.pack(fill='x', pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Count:").pack(anchor='w', pady=(0, 5))
+        count_var = tk.StringVar(value=str(cigar_data['count']))
+        count_entry = ttk.Entry(main_frame, textvariable=count_var, width=30)
+        count_entry.pack(fill='x', pady=(0, 10))
+        
+        ttk.Label(main_frame, text="Price ($):").pack(anchor='w', pady=(0, 5))
+        price_var = tk.StringVar(value=str(cigar_data['price']))
+        price_entry = ttk.Entry(main_frame, textvariable=price_var, width=30)
+        price_entry.pack(fill='x', pady=(0, 15))
+        
+        # Buttons frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill='x', pady=(0, 10))
+        
+        def save_changes():
+            try:
+                # Validate inputs
+                new_count = int(count_var.get())
+                new_price = float(price_var.get())
+                
+                if new_count <= 0 or new_price < 0:
+                    messagebox.showerror("Error", "Please enter valid numeric values.")
+                    return
+                
+                # Update cigar data
+                cigar_data['brand'] = brand_var.get().strip()
+                cigar_data['cigar'] = cigar_var.get().strip()
+                cigar_data['size'] = size_var.get().strip()
+                cigar_data['type'] = type_var.get().strip()
+                cigar_data['count'] = new_count
+                cigar_data['price'] = new_price
+                
+                # Add to brands/sizes/types if new
+                if cigar_data['brand'] and cigar_data['brand'] not in self.brands:
+                    self.brands.add(cigar_data['brand'])
+                if cigar_data['size'] and cigar_data['size'] not in self.sizes:
+                    self.sizes.add(cigar_data['size'])
+                if cigar_data['type'] and cigar_data['type'] not in self.types:
+                    self.types.add(cigar_data['type'])
+                
+                # Recalculate costs and refresh display
+                self.calculate_resupply_costs()
+                edit_dialog.destroy()
+                
+            except ValueError:
+                messagebox.showerror("Error", "Please enter valid numeric values.")
+        
+        def cancel_edit():
+            edit_dialog.destroy()
+        
+        ttk.Button(button_frame, text="Save Changes", command=save_changes, 
+                  width=15).pack(side='left', padx=(0, 10))
+        ttk.Button(button_frame, text="Cancel", command=cancel_edit, 
+                  width=15).pack(side='right')
+        
+        # Focus on first field
+        brand_combo.focus()
 
     def process_resupply_order(self):
         """Process the resupply order and add to inventory."""
@@ -1731,6 +1862,9 @@ Version: 2.0
         self.tree.bind('<Button-1>', self.handle_click)
         self.tree.bind('<Double-1>', lambda e: setattr(e, 'double', True) or self.handle_click(e))
         self.tree.bind('<Button-3>', lambda e: self.tree.selection_remove(self.tree.selection()))
+        
+        # Bind Delete key to remove selected items
+        self.tree.bind('<Delete>', lambda event: self.remove_selected())
 
     def setup_sales_history_in_frame(self, parent_frame):
         """Setup the enhanced sales history window with transaction grouping and partial returns."""
@@ -2523,25 +2657,45 @@ Version: 2.0
             messagebox.showwarning("Warning", "Please select items to remove")
             return
         
-        # Get list of cigars to be removed
+        # Get list of cigars to be removed with full details
         cigars_to_remove = []
         for item in selected_items:
             values = self.tree.item(item)['values']
             if values:
+                brand = values[1]  # Index 1 for brand
                 cigar_name = values[2]  # Index 2 for cigar name
-                cigars_to_remove.append(cigar_name)
+                size = values[3]  # Index 3 for size
+                cigars_to_remove.append({
+                    'brand': brand,
+                    'cigar': cigar_name,
+                    'size': size,
+                    'display_name': f"{brand} - {cigar_name} ({size})"
+                })
         
         # Confirm deletion with user
         confirm_msg = "Are you sure you want to remove these cigars?\n\n"
-        confirm_msg += "\n".join(cigars_to_remove)
+        confirm_msg += "\n".join([cigar['display_name'] for cigar in cigars_to_remove])
         if messagebox.askyesno("Confirm Removal", confirm_msg):
             # Remove from checkbox states if present
-            for cigar_name in cigars_to_remove:
-                if cigar_name in self.checkbox_states:
-                    del self.checkbox_states[cigar_name]
+            for cigar in cigars_to_remove:
+                cigar_key = cigar['cigar']
+                if cigar_key in self.checkbox_states:
+                    del self.checkbox_states[cigar_key]
                 
-            # Remove from inventory
-            self.inventory = [x for x in self.inventory if x['cigar'] not in cigars_to_remove]
+            # Remove from inventory using brand, cigar, and size for precise matching
+            removed_details = []
+            for cigar in cigars_to_remove:
+                # Find the cigar in inventory to get the count
+                for inv_cigar in self.inventory[:]:  # Use slice copy to avoid modification during iteration
+                    if (inv_cigar['brand'] == cigar['brand'] and 
+                        inv_cigar['cigar'] == cigar['cigar'] and 
+                        inv_cigar['size'] == cigar['size']):
+                        removed_details.append({
+                            'name': cigar['display_name'],
+                            'count': inv_cigar['count']
+                        })
+                        self.inventory.remove(inv_cigar)
+                        break
             
             # Save changes
             self.save_inventory()
@@ -2553,7 +2707,13 @@ Version: 2.0
             self.update_inventory_totals()
             self.update_selected_cigars_display()
             
-            messagebox.showinfo("Success", f"Removed {len(cigars_to_remove)} cigar(s) from inventory")
+            # Create detailed success message
+            if len(removed_details) == 1:
+                detail = removed_details[0]
+                messagebox.showinfo("Success", f"Removed {detail['name']}\nCount: {detail['count']}")
+            else:
+                details_text = "\n".join([f"• {detail['name']} (Count: {detail['count']})" for detail in removed_details])
+                messagebox.showinfo("Success", f"Removed {len(removed_details)} cigar(s):\n\n{details_text}")
 
     def update_count(self):
         selected_item = self.tree.selection()
